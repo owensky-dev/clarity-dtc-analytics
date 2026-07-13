@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Local environments and credentials
+.venv/
+.env
+
+# macOS
+.DS_Store
+
+# Generated store-project artifacts
+data/
+reports/
+outputs/
+logs/

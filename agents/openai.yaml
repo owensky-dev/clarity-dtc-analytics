@@ -1,0 +1,7 @@
+interface:
+  display_name: "Clarity 独立站分析"
+  short_description: "整合 Clarity 与四源数据的本地 CRO 分析"
+  default_prompt: "Use $clarity-dtc-analytics to initialize a Shopify Clarity warehouse and generate a Chinese CRO report."
+
+policy:
+  allow_implicit_invocation: true

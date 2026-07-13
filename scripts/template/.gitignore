@@ -1,0 +1,10 @@
+.env
+data/raw/
+data/staged/
+data/warehouse/
+data/state/
+outputs/
+reports/
+logs/
+__pycache__/
+*.py[cod]
