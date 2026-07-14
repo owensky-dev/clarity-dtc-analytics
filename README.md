@@ -1,5 +1,7 @@
 # Clarity DTC Analytics
 
+[![CI](https://github.com/owensky-dev/clarity-dtc-analytics/actions/workflows/ci.yml/badge.svg)](https://github.com/owensky-dev/clarity-dtc-analytics/actions/workflows/ci.yml)
+
 面向 Shopify 独立站的本地数据分析 Skill：将 Microsoft Clarity、GA4、Google Search Console、Google Ads 和 Shopify 订单数据保存到本地仓库，生成可审计的中文 CRO 周报。
 
 ## 能做什么
