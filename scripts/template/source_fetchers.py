@@ -6,7 +6,7 @@ from typing import Any, Callable
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
-from source_metrics import rollup_source_rows, shopify_daily_metrics
+from source_metrics import rollup_ga4_rows, rollup_source_rows, shopify_daily_metrics
 
 
 ORDERS_QUERY = """
@@ -154,25 +154,28 @@ def fetch_shopify_dataset(settings: dict[str, str], start_date: str, end_date: s
     return _dataset("orders", rows, shopify_daily_metrics(rows, start_date=start_date, end_date=end_date))
 
 
-def _ga4_rows(settings: dict[str, str], start_date: str, end_date: str) -> list[dict[str, Any]]:
-    _require(settings, "GOOGLE_APPLICATION_CREDENTIALS", "GA4_PROPERTY_ID")
-    try:
-        from google.analytics.data_v1beta import BetaAnalyticsDataClient
-        from google.analytics.data_v1beta.types import DateRange, Dimension, Metric, RunReportRequest
-        from google.oauth2 import service_account
-    except ImportError as error:
-        raise SourceFetchError("Install google-analytics-data and google-auth for GA4 collection.") from error
-    credentials = service_account.Credentials.from_service_account_file(settings["GOOGLE_APPLICATION_CREDENTIALS"])
-    client = BetaAnalyticsDataClient(credentials=credentials)
+def _ga4_report_rows(
+    client: Any,
+    *,
+    property_id: str,
+    dimensions: list[str],
+    metrics: list[str],
+    start_date: str,
+    end_date: str,
+    dimension_filter: Any | None = None,
+) -> list[dict[str, Any]]:
+    from google.analytics.data_v1beta.types import DateRange, Dimension, Metric, RunReportRequest
+
     rows: list[dict[str, Any]] = []
     offset = 0
     while True:
         response = client.run_report(
             RunReportRequest(
-                property=f"properties/{settings['GA4_PROPERTY_ID']}",
-                dimensions=[Dimension(name="date"), Dimension(name="sessionDefaultChannelGroup")],
-                metrics=[Metric(name=name) for name in ("sessions", "engagedSessions", "conversions", "ecommercePurchases", "totalRevenue")],
+                property=f"properties/{property_id}",
+                dimensions=[Dimension(name=name) for name in dimensions],
+                metrics=[Metric(name=name) for name in metrics],
                 date_ranges=[DateRange(start_date=start_date, end_date=end_date)],
+                dimension_filter=dimension_filter,
                 limit=100000,
                 offset=offset,
             )
@@ -181,13 +184,12 @@ def _ga4_rows(settings: dict[str, str], start_date: str, end_date: str) -> list[
             break
         for row in response.rows:
             record = {
-                "date": row.dimension_values[0].value,
-                "sessionDefaultChannelGroup": row.dimension_values[1].value,
+                key: value.value for key, value in zip(dimensions, row.dimension_values)
             }
             record.update(
                 {
                     key: float(value.value or 0)
-                    for key, value in zip(("sessions", "engagedSessions", "conversions", "ecommercePurchases", "totalRevenue"), row.metric_values)
+                    for key, value in zip(metrics, row.metric_values)
                 }
             )
             rows.append(record)
@@ -197,9 +199,65 @@ def _ga4_rows(settings: dict[str, str], start_date: str, end_date: str) -> list[
     return rows
 
 
+def _ga4_rows(
+    settings: dict[str, str], start_date: str, end_date: str
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    _require(settings, "GOOGLE_APPLICATION_CREDENTIALS", "GA4_PROPERTY_ID")
+    try:
+        from google.analytics.data_v1beta import BetaAnalyticsDataClient
+        from google.analytics.data_v1beta.types import Filter, FilterExpression
+        from google.oauth2 import service_account
+    except ImportError as error:
+        raise SourceFetchError("Install google-analytics-data and google-auth for GA4 collection.") from error
+    credentials = service_account.Credentials.from_service_account_file(settings["GOOGLE_APPLICATION_CREDENTIALS"])
+    client = BetaAnalyticsDataClient(credentials=credentials)
+    channel_rows = _ga4_report_rows(
+        client,
+        property_id=settings["GA4_PROPERTY_ID"],
+        dimensions=["date", "sessionDefaultChannelGroup"],
+        metrics=["sessions", "engagedSessions", "conversions", "ecommercePurchases", "totalRevenue"],
+        start_date=start_date,
+        end_date=end_date,
+    )
+    event_filter = FilterExpression(
+        filter=Filter(
+            field_name="eventName",
+            in_list_filter=Filter.InListFilter(
+                values=["add_to_cart", "begin_checkout"], case_sensitive=True
+            ),
+        )
+    )
+    event_rows = _ga4_report_rows(
+        client,
+        property_id=settings["GA4_PROPERTY_ID"],
+        dimensions=["date", "landingPagePlusQueryString", "eventName"],
+        metrics=["eventCount"],
+        start_date=start_date,
+        end_date=end_date,
+        dimension_filter=event_filter,
+    )
+    return channel_rows, event_rows
+
+
 def fetch_ga4_dataset(settings: dict[str, str], start_date: str, end_date: str) -> Any:
-    rows = _ga4_rows(settings, start_date, end_date)
-    return _dataset("channel", rows, rollup_source_rows("ga4", rows))
+    channel_rows, event_rows = _ga4_rows(settings, start_date, end_date)
+    event_rows = [
+        {
+            **row,
+            "landingPagePlusQueryString": str(row.get("landingPagePlusQueryString", "")).split("?", 1)[0],
+        }
+        for row in event_rows
+    ]
+    raw_rows = [
+        {"record_type": "channel", **row} for row in channel_rows
+    ] + [
+        {"record_type": "funnel_event", **row} for row in event_rows
+    ]
+    return _dataset(
+        "channel_and_funnel",
+        raw_rows,
+        rollup_ga4_rows(channel_rows, event_rows),
+    )
 
 
 def _gsc_query_rows(

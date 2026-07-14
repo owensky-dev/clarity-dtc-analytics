@@ -78,3 +78,21 @@ def rollup_source_rows(source: str, rows: list[dict[str, Any]]) -> list[dict[str
         for target, source_key in mapping.items():
             aggregate[target] += _number(row.get(source_key))
     return [{"date": date_value, **grouped[date_value]} for date_value in sorted(grouped)]
+
+
+def rollup_ga4_rows(
+    channel_rows: list[dict[str, Any]], event_rows: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Merge dated GA4 funnel events into channel-derived daily coverage."""
+    daily = rollup_source_rows("ga4", channel_rows)
+    by_date = {row["date"]: row for row in daily}
+    for row in daily:
+        row["add_to_cart"] = 0.0
+        row["begin_checkout"] = 0.0
+    for event in event_rows:
+        date_value = _iso_date(event.get("date", ""))
+        event_name = str(event.get("eventName", ""))
+        if date_value not in by_date or event_name not in {"add_to_cart", "begin_checkout"}:
+            continue
+        by_date[date_value][event_name] += _number(event.get("eventCount"))
+    return [by_date[date_value] for date_value in sorted(by_date)]

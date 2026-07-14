@@ -7,6 +7,8 @@ description: Build and operate a local, evidence-first Shopify analytics warehou
 
 Create a per-store local warehouse for daily Clarity behavior evidence and four-source ecommerce reporting. Keep source roles separate: Shopify is revenue/orders, GA4 is traffic/funnel, Google Ads is paid-media performance, GSC is search demand, and Clarity is behavior evidence only.
 
+Fetch GA4 `add_to_cart` and `begin_checkout` through a separate event query with `date`, `landingPagePlusQueryString`, and `eventName` dimensions. Do not add `eventName` to the channel Sessions query because that would change its aggregation grain.
+
 ## Initialize a store project
 
 1. Run `python <skill-root>/scripts/init_project.py --target <store-project-path>`.
@@ -44,6 +46,8 @@ Run `python scripts/generate_weekly_report.py --project-root <store-project-path
 The weekly report must use the latest consecutive 14 dates covered by GA4, Shopify, Google Ads, and GSC: current 7 days versus prior 7 days. If no aligned window exists, report source/date gaps instead of generating a partial financial week.
 
 At the top of both HTML and Markdown outputs, show `周报周期` for the current 7-day window and `对比周期` for the prior 7-day window. The period labels must come from the aligned report window.
+
+The core funnel must compare current versus previous GA4 Sessions, `add_to_cart`, `begin_checkout`, and Shopify orders. Show add-to-cart rate, cart-to-checkout rate, and store conversion rate as percentages.
 
 Treat Clarity as a separate evidence layer. Include observed facts, cautious inferences, reproducible Clarity filters, and validation actions; never claim causal behavior from aggregate metrics or recordings. Read [reporting-policy.md](references/reporting-policy.md) for metric and narrative rules.
 

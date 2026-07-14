@@ -77,6 +77,8 @@ def _period_summary(store: AnalyticsWarehouse, start: date, end: date) -> dict[s
     revenue = _sum(shopify, "revenue")
     orders = _sum(shopify, "orders")
     sessions = _sum(ga4, "sessions")
+    add_to_cart = _sum(ga4, "add_to_cart")
+    begin_checkout = _sum(ga4, "begin_checkout")
     ad_spend = _sum(ads, "ad_spend")
     ad_conversions = _sum(ads, "ad_conversions")
     ad_conversion_value = _sum(ads, "ad_conversion_value")
@@ -84,6 +86,11 @@ def _period_summary(store: AnalyticsWarehouse, start: date, end: date) -> dict[s
         "revenue": revenue,
         "orders": orders,
         "sessions": sessions,
+        "add_to_cart": add_to_cart,
+        "begin_checkout": begin_checkout,
+        "add_to_cart_rate": add_to_cart / sessions if sessions else None,
+        "checkout_rate": begin_checkout / sessions if sessions else None,
+        "cart_to_checkout_rate": begin_checkout / add_to_cart if add_to_cart else None,
         "conversion_rate": orders / sessions if sessions else None,
         "aov": revenue / orders if orders else None,
         "ad_spend": ad_spend,
@@ -100,6 +107,7 @@ def _period_summary(store: AnalyticsWarehouse, start: date, end: date) -> dict[s
 
 def _markdown(payload: dict) -> str:
     current = payload["current"]
+    previous = payload["previous"]
     lines = [
         "# 独立站周度 CRO 报告",
         "",
@@ -113,8 +121,17 @@ def _markdown(payload: dict) -> str:
         f"- GSC 点击：{current['seo_clicks']:.0f}；CTR：{(current['seo_ctr'] or 0):.2%}。",
         "- Clarity 行为证据需单独检查覆盖与截断风险；不将聚合行为数据表述为因果。",
         "",
+        "## 核心漏斗：本周 vs 上周",
+        "| 阶段 | 本周 | 上周 | 本周效率 | 上周效率 |",
+        "| --- | ---: | ---: | ---: | ---: |",
+        f"| GA4 Sessions | {current['sessions']:.0f} | {previous['sessions']:.0f} | - | - |",
+        f"| GA4 加购 | {current['add_to_cart']:.0f} | {previous['add_to_cart']:.0f} | {(current['add_to_cart_rate'] or 0):.2%} | {(previous['add_to_cart_rate'] or 0):.2%} |",
+        f"| GA4 开始结账 | {current['begin_checkout']:.0f} | {previous['begin_checkout']:.0f} | {(current['cart_to_checkout_rate'] or 0):.2%} | {(previous['cart_to_checkout_rate'] or 0):.2%} |",
+        f"| Shopify 订单 | {current['orders']:.0f} | {previous['orders']:.0f} | {(current['conversion_rate'] or 0):.2%} | {(previous['conversion_rate'] or 0):.2%} |",
+        "",
         "## 数据健康",
         "- 本报告仅在 GA4、Shopify、Google Ads、GSC 均覆盖当前与上周连续 14 天时生成。",
+        "- GA4 加购与开始结账使用独立日期级事件查询，不与渠道 Sessions 查询混合汇总。",
     ]
     if payload.get("cro_candidates"):
         lines += ["", "## CRO 测试候选"]
@@ -125,6 +142,7 @@ def _markdown(payload: dict) -> str:
 
 def _html_report(payload: dict) -> str:
     current = payload["current"]
+    previous = payload["previous"]
     rows = "".join(
         f"<tr><th>{html.escape(label)}</th><td>{html.escape(value)}</td></tr>"
         for label, value in (
@@ -133,6 +151,15 @@ def _html_report(payload: dict) -> str:
             ("GA4 Sessions", f"{current['sessions']:.0f}"),
             ("全站转化率", f"{(current['conversion_rate'] or 0):.2%}"),
             ("Google Ads CPA", "n/a" if current["cpa"] is None else f"{current['cpa']:.2f}"),
+        )
+    )
+    funnel_rows = "".join(
+        f"<tr><th>{html.escape(stage)}</th><td>{current_value}</td><td>{previous_value}</td><td>{current_rate}</td><td>{previous_rate}</td></tr>"
+        for stage, current_value, previous_value, current_rate, previous_rate in (
+            ("GA4 Sessions", f"{current['sessions']:.0f}", f"{previous['sessions']:.0f}", "-", "-"),
+            ("GA4 加购", f"{current['add_to_cart']:.0f}", f"{previous['add_to_cart']:.0f}", f"{(current['add_to_cart_rate'] or 0):.2%}", f"{(previous['add_to_cart_rate'] or 0):.2%}"),
+            ("GA4 开始结账", f"{current['begin_checkout']:.0f}", f"{previous['begin_checkout']:.0f}", f"{(current['cart_to_checkout_rate'] or 0):.2%}", f"{(previous['cart_to_checkout_rate'] or 0):.2%}"),
+            ("Shopify 订单", f"{current['orders']:.0f}", f"{previous['orders']:.0f}", f"{(current['conversion_rate'] or 0):.2%}", f"{(previous['conversion_rate'] or 0):.2%}"),
         )
     )
     candidates = "".join(
@@ -146,6 +173,7 @@ def _html_report(payload: dict) -> str:
         "<style>body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;max-width:900px;margin:40px auto;color:#18231c}table{border-collapse:collapse;width:100%}th,td{padding:10px;border-bottom:1px solid #ddd;text-align:left}</style>"
         f"<h1>独立站周度 CRO 报告</h1><p>周报周期：{payload['window']['current_start']} 至 {payload['window']['current_end']}</p>"
         f"<p>对比周期：{payload['window']['previous_start']} 至 {payload['window']['previous_end']}（前一完整周）</p><table>{rows}</table>"
+        f"<h2>核心漏斗：本周 vs 上周</h2><table><thead><tr><th>阶段</th><th>本周</th><th>上周</th><th>本周效率</th><th>上周效率</th></tr></thead><tbody>{funnel_rows}</tbody></table>"
         f"{candidate_section}<p>Clarity 仅作为行为证据；请复核代表性录像或热图后再确定因果与测试方案。</p></html>"
     )
 

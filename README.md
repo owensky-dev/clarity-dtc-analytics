@@ -6,10 +6,12 @@
 
 - 初始化按店铺隔离的数据仓库，密钥仅保存在本地 `.env`
 - 每日采集 Clarity 的行为快照，以及 GA4、GSC、Google Ads、Shopify 四类经营数据
+- GA4 使用独立日期级事件查询保存 `add_to_cart` 与 `begin_checkout`，避免与渠道 Sessions 粒度混合
 - 强制以四源都完整覆盖的连续 14 天生成周报：当前 7 天对比前一完整周
 - 以 Shopify 作为营收和订单事实来源；把 Clarity 作为行为证据层，不将聚合行为数据表述为因果
 - 输出 HTML、Markdown、JSON 和供可选 AI 叙事使用的结构化分析上下文
 - 在 HTML 与 Markdown 顶部清晰标注“周报周期”和“对比周期”
+- 周报按本周与上周展示 Sessions → 加购 → 开始结账 → Shopify 订单漏斗
 
 ## 使用方式
 

@@ -4,6 +4,7 @@ import json
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 TEMPLATE_SCRIPTS = Path(__file__).resolve().parents[1] / "template"
@@ -66,6 +67,23 @@ class SourceFetcherTests(unittest.TestCase):
             set(source_fetchers.default_source_fetchers()),
             {"ga4", "gsc", "google_ads", "shopify"},
         )
+
+    def test_ga4_dataset_keeps_channel_and_dated_funnel_rows_separate(self) -> None:
+        self.assertIsNotNone(source_fetchers)
+        channel_rows = [{"date": "20260712", "sessionDefaultChannelGroup": "Organic Search", "sessions": 20}]
+        event_rows = [
+            {"date": "20260712", "landingPagePlusQueryString": "/p?access_token=secret", "eventName": "add_to_cart", "eventCount": 4},
+            {"date": "20260712", "landingPagePlusQueryString": "/p", "eventName": "begin_checkout", "eventCount": 2},
+        ]
+        with patch.object(source_fetchers, "_ga4_rows", return_value=(channel_rows, event_rows)):
+            dataset = source_fetchers.fetch_ga4_dataset({}, "2026-07-12", "2026-07-12")
+        self.assertEqual(dataset.dataset, "channel_and_funnel")
+        self.assertEqual(dataset.raw_rows[0]["record_type"], "channel")
+        self.assertEqual(dataset.raw_rows[-1]["record_type"], "funnel_event")
+        self.assertEqual(dataset.raw_rows[1]["landingPagePlusQueryString"], "/p")
+        self.assertEqual(dataset.daily_metrics[0]["sessions"], 20.0)
+        self.assertEqual(dataset.daily_metrics[0]["add_to_cart"], 4.0)
+        self.assertEqual(dataset.daily_metrics[0]["begin_checkout"], 2.0)
 
     def test_gsc_daily_query_uses_date_only_for_report_totals(self) -> None:
         self.assertIsNotNone(source_fetchers)
