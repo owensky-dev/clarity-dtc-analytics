@@ -26,8 +26,11 @@ The snapshot anchor is a configured fixed UTC clock time. Its manifest contains 
 ## Four-source facts
 
 - Shopify daily facts: `date`, `orders`, `revenue`; a date with zero orders is a valid complete row.
-- GA4: sessions, engaged sessions, conversions, ecommerce purchases, and GA4 revenue.
+- GA4 channel facts: `date`, sessions, engaged sessions, conversions, ecommerce purchases, and GA4 revenue.
+- GA4 funnel-event raw facts: `date`, sanitized `landingPagePlusQueryString`, `eventName`, and `eventCount`, limited to `add_to_cart` and `begin_checkout`. Remove the query string before local persistence so checkout tokens and tracking parameters are not stored. Daily warehouse facts add `add_to_cart` and `begin_checkout`; channel rows remain the source of date coverage so an event-only row cannot create false GA4 completeness.
 - Google Ads: clicks, spend, conversions, conversion value. Convert micros to normal currency before staging.
 - GSC: clicks and impressions; calculate CTR only after aggregation. Use a `date`-only Search Console query for daily report facts. High-cardinality `date × page × query × country × device` rows are diagnostic raw data and must not be treated as complete totals.
 
 The weekly finance report requires every source to cover both comparison weeks. Clarity coverage does not block the four-source finance report, but an unavailable or partial Clarity slice must disable associated CRO evidence.
+
+Weekly funnel rates use the aligned report window: add-to-cart rate is `add_to_cart / sessions`, cart-to-checkout rate is `begin_checkout / add_to_cart`, and store conversion rate is Shopify orders divided by GA4 sessions.

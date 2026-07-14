@@ -35,7 +35,17 @@ class WeeklyReportTests(unittest.TestCase):
                 "shopify", "run", [{"date": value, "orders": 1, "revenue": 100.0} for value in dates]
             )
             store.persist_source_daily_metrics(
-                "ga4", "run", [{"date": value, "sessions": 20.0} for value in dates]
+                "ga4",
+                "run",
+                [
+                    {
+                        "date": value,
+                        "sessions": 20.0,
+                        "add_to_cart": 4.0 if index < 7 else 6.0,
+                        "begin_checkout": 2.0 if index < 7 else 3.0,
+                    }
+                    for index, value in enumerate(dates)
+                ],
             )
             store.persist_source_daily_metrics(
                 "google_ads", "run", [{"date": value, "ad_spend": 5.0, "ad_clicks": 10.0, "ad_conversions": 0.0, "ad_conversion_value": 0.0} for value in dates]
@@ -48,6 +58,11 @@ class WeeklyReportTests(unittest.TestCase):
             self.assertEqual(payload["current"]["revenue"], 700.0)
             self.assertEqual(payload["current"]["orders"], 7.0)
             self.assertEqual(payload["current"]["conversion_rate"], 0.05)
+            self.assertEqual(payload["current"]["add_to_cart"], 42.0)
+            self.assertEqual(payload["previous"]["add_to_cart"], 28.0)
+            self.assertEqual(payload["current"]["begin_checkout"], 21.0)
+            self.assertEqual(payload["current"]["add_to_cart_rate"], 0.3)
+            self.assertEqual(payload["current"]["cart_to_checkout_rate"], 0.5)
             self.assertEqual(payload["current"]["cpa"], None)
             self.assertTrue(result.html_path.is_file())
             self.assertTrue(result.markdown_path.is_file())
@@ -58,6 +73,8 @@ class WeeklyReportTests(unittest.TestCase):
             self.assertIn(comparison_period, result.markdown_path.read_text(encoding="utf-8"))
             self.assertIn(current_period, result.html_path.read_text(encoding="utf-8"))
             self.assertIn(comparison_period, result.html_path.read_text(encoding="utf-8"))
+            self.assertIn("GA4 加购", result.markdown_path.read_text(encoding="utf-8"))
+            self.assertIn("GA4 开始结账", result.html_path.read_text(encoding="utf-8"))
 
     def test_weekly_report_adds_clarity_friction_as_behavior_evidence(self) -> None:
         self.assertIsNotNone(reporting)

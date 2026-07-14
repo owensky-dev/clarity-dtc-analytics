@@ -12,7 +12,7 @@ Write a local data-health and severe-anomaly report. Require a minimum sample of
 
 ## Weekly report
 
-Write HTML, Markdown, JSON, and `analysis_context` outputs. Include management summary, core funnel, source coverage, Clarity friction, page/device/channel evidence, and prioritized experiments. At the top of HTML and Markdown outputs, show `周报周期` for the current 7 days and `对比周期` for the prior 7 days. Show rates as percentages. Show Google Ads CPA as `n/a` when conversions are zero.
+Write HTML, Markdown, JSON, and `analysis_context` outputs. Include management summary, core funnel, source coverage, Clarity friction, page/device/channel evidence, and prioritized experiments. At the top of HTML and Markdown outputs, show `周报周期` for the current 7 days and `对比周期` for the prior 7 days. The core funnel must compare current and previous GA4 Sessions, `add_to_cart`, `begin_checkout`, and Shopify orders. Show rates as percentages. Show Google Ads CPA as `n/a` when conversions are zero.
 
 ## Optional AI narrative
 

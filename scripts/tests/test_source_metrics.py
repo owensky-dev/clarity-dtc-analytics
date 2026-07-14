@@ -59,6 +59,25 @@ class SourceMetricsTests(unittest.TestCase):
         )
         self.assertEqual(rows, [{"date": "2026-07-12", "sessions": 12.0, "engaged_sessions": 0.0, "conversions": 0.0, "ecommerce_purchases": 0.0, "ga4_revenue": 0.0}])
 
+    def test_ga4_rollup_merges_dated_add_to_cart_and_checkout_events(self) -> None:
+        self.assertIsNotNone(source_metrics)
+        rows = source_metrics.rollup_ga4_rows(
+            [
+                {"date": "20260711", "sessions": 10},
+                {"date": "20260712", "sessions": 20},
+            ],
+            [
+                {"date": "20260711", "eventName": "add_to_cart", "eventCount": 3},
+                {"date": "20260711", "eventName": "begin_checkout", "eventCount": 1},
+                {"date": "20260712", "eventName": "add_to_cart", "eventCount": 4},
+                {"date": "20260712", "eventName": "begin_checkout", "eventCount": 2},
+            ],
+        )
+        self.assertEqual(rows[0]["add_to_cart"], 3.0)
+        self.assertEqual(rows[0]["begin_checkout"], 1.0)
+        self.assertEqual(rows[1]["add_to_cart"], 4.0)
+        self.assertEqual(rows[1]["begin_checkout"], 2.0)
+
 
 if __name__ == "__main__":
     unittest.main()
