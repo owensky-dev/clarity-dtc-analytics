@@ -39,6 +39,7 @@ class LaunchdSupportTests(unittest.TestCase):
             self.assertIn('rmdir -- "$lock_path"', wrapper)
             self.assertIn("PATH", payload["EnvironmentVariables"])
 
+    @unittest.skipUnless(Path("/bin/zsh").is_file(), "requires macOS /bin/zsh")
     def test_wrapper_removes_lock_after_successful_run(self) -> None:
         self.assertIsNotNone(launchd_support)
         with tempfile.TemporaryDirectory() as directory:
