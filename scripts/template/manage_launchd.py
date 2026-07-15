@@ -23,7 +23,9 @@ def main() -> int:
     bundle = build_launchd_bundle(
         project_root=Path(args.project_root).expanduser().resolve(),
         store_slug=args.store_slug,
-        runtime_python=Path(args.runtime_python).expanduser().resolve(),
+        # Preserve a virtualenv interpreter path rather than resolving its
+        # symlink to the base Python executable, which may lack dependencies.
+        runtime_python=Path(args.runtime_python).expanduser().absolute(),
         automation_root=Path(args.automation_root).expanduser().resolve(),
         hour=args.hour,
         minute=args.minute,

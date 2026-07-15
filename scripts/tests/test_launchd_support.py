@@ -39,6 +39,23 @@ class LaunchdSupportTests(unittest.TestCase):
             self.assertIn('rmdir -- "$lock_path"', wrapper)
             self.assertIn("PATH", payload["EnvironmentVariables"])
 
+    def test_launchd_bundle_preserves_virtualenv_interpreter_symlink(self) -> None:
+        self.assertIsNotNone(launchd_support)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            base_python = root / "python-base"
+            base_python.write_text("", encoding="utf-8")
+            venv_python = root / ".venv" / "bin" / "python"
+            venv_python.parent.mkdir(parents=True)
+            venv_python.symlink_to(base_python)
+            bundle = launchd_support.build_launchd_bundle(
+                project_root=root / "project",
+                store_slug="demo-store",
+                runtime_python=venv_python.absolute(),
+                automation_root=root / "automation",
+            )
+            self.assertIn(str(venv_python), bundle.wrapper_path.read_text(encoding="utf-8"))
+
     @unittest.skipUnless(Path("/bin/zsh").is_file(), "requires macOS /bin/zsh")
     def test_wrapper_removes_lock_after_successful_run(self) -> None:
         self.assertIsNotNone(launchd_support)
