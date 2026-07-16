@@ -59,6 +59,8 @@ Generate a launchd bundle with `python scripts/manage_launchd.py --project-root 
 
 Keep launchd wrappers and logs under `~/.codex/automations/clarity-dtc-analytics/`; use absolute paths and do not run scheduled jobs from a protected Documents working directory.
 
+For an operating store, add a separate daily health-check automation after the scheduled ingestion. It must verify that today's Clarity snapshot exists and that all four core-source statuses are `complete`. On the first failed check, inspect the manifests and logs, repair safe local/runtime issues, and rerun ingestion. Check again at least four hours later; notify the operator only when the second attempt cannot restore complete collection. Never silently leave a failed collection without an explicit operator notification.
+
 ## Resources
 
 - [configuration.md](references/configuration.md): configuration and credentials.
