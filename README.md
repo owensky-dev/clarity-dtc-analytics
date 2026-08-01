@@ -64,3 +64,13 @@ python -m unittest discover -s scripts/tests -p 'test_*.py' -v
 ## 适用场景
 
 Shopify 独立站的周度增长复盘、广告与自然搜索协同诊断、Clarity 行为摩擦排查，以及可复用的本地 DTC 分析基础设施。
+
+## 关注公众号
+
+如果这个 Skill 对你有帮助，欢迎关注微信公众号 **虎皮叔叔聊跨境独立站**，获取更多独立站增长、数据分析与 AI 营销实操内容。
+
+<p align="center">
+  <img src="assets/wechat-qr.png" alt="虎皮叔叔聊跨境独立站公众号二维码" width="900">
+</p>
+
+<p align="center">微信扫码关注「虎皮叔叔聊跨境独立站」</p>
