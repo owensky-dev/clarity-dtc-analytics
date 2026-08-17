@@ -36,3 +36,11 @@ The snapshot anchor is a configured fixed UTC clock time. Its manifest contains 
 The weekly finance report requires every source to cover both comparison weeks. Clarity coverage does not block the four-source finance report, but an unavailable or partial Clarity slice must disable associated CRO evidence.
 
 Weekly funnel rates use the aligned report window: add-to-cart rate is `add_to_cart / sessions`, cart-to-checkout rate is `begin_checkout / add_to_cart`, and store conversion rate is Shopify orders divided by GA4 sessions.
+
+Weekly purchase-integrity fields use the same aligned window:
+
+- `purchase_count_gap = Shopify orders - GA4 ecommerce purchases`
+- `purchase_revenue_gap = Shopify revenue - GA4 revenue`
+- `purchase_tracking_rate = GA4 ecommerce purchases / Shopify orders`
+
+A positive count gap is a high-risk signal, not transaction-level evidence. Exact reconciliation requires BigQuery `transaction_id` matched to Shopify paid, non-test orders; no customer data belongs in the report output.
