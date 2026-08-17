@@ -87,7 +87,8 @@ class DailyCollectionTests(unittest.TestCase):
             )
             first = collector.collect(now=datetime(2026, 7, 12, 0, 30, tzinfo=timezone.utc))
             second = collector.collect(now=datetime(2026, 7, 12, 8, 30, tzinfo=timezone.utc))
-            self.assertEqual(first.successful_packs, 4)
+            self.assertEqual(first.successful_packs, 0)
+            self.assertEqual(first.failed_packs, 4)
             self.assertEqual(second.skipped_packs, 4)
             self.assertEqual(collector.warehouse.count_rows("clarity_behavior_facts"), 0)
             manifest = json.loads(
@@ -95,6 +96,145 @@ class DailyCollectionTests(unittest.TestCase):
             )
             self.assertTrue(manifest["truncation_risk"])
             self.assertEqual(manifest["coverage_status"], "partial")
+
+    def test_url_country_device_without_country_region_is_saved_as_degraded_complete(self) -> None:
+        self.assertIsNotNone(daily_collection)
+
+        def transport(url: str, headers: dict[str, str]) -> daily_collection.HttpResponse:
+            row = {
+                "Url": "https://shop.test/products/a",
+                "Device": "Mobile",
+                "Channel": "Direct",
+                "Source": "google",
+                "Medium": "cpc",
+                "Campaign": "brand",
+                "Country/Region": "US",
+                "totalSessionCount": "1",
+            }
+            if "dimension2=Country%2FRegion" in url:
+                row.pop("Country/Region")
+            body = json.dumps([{"metricName": "Traffic", "information": [row]}]).encode("utf-8")
+            return daily_collection.HttpResponse(status=200, body=body)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            collector = daily_collection.ClarityCollector(
+                root,
+                {"CLARITY_PROJECT_ID": "project", "CLARITY_EXPORT_TOKEN": "token"},
+                transport=transport,
+            )
+            outcome = collector.collect(now=datetime(2026, 7, 12, 0, 30, tzinfo=timezone.utc))
+            self.assertEqual(outcome.successful_packs, 4)
+            self.assertEqual(outcome.failed_packs, 0)
+            manifest = json.loads(
+                (
+                    root
+                    / "data"
+                    / "raw"
+                    / "clarity"
+                    / "snapshot_id=2026-07-12T00-00-00Z"
+                    / "query_pack=url_country_device"
+                    / "manifest.json"
+                ).read_text(encoding="utf-8")
+            )
+            self.assertFalse(manifest["schema_mismatch"])
+            self.assertEqual(manifest["missing_dimensions"], ["Country/Region"])
+            self.assertEqual(manifest["degraded_dimensions"], ["Country/Region"])
+            self.assertEqual(
+                collector.ledger.entry("2026-07-12T00:00:00Z", "url_country_device")["status"],
+                "success",
+            )
+            self.assertEqual(collector.warehouse.count_rows("clarity_behavior_facts"), 4)
+
+    def test_url_country_device_still_fails_when_url_or_device_is_missing(self) -> None:
+        self.assertIsNotNone(daily_collection)
+
+        def transport(url: str, headers: dict[str, str]) -> daily_collection.HttpResponse:
+            row = {
+                "Url": "https://shop.test/products/a",
+                "Device": "Mobile",
+                "Channel": "Direct",
+                "Source": "google",
+                "Medium": "cpc",
+                "Campaign": "brand",
+                "Country/Region": "US",
+                "totalSessionCount": "1",
+            }
+            if "dimension2=Country%2FRegion" in url:
+                row.pop("Url")
+            body = json.dumps([{"metricName": "Traffic", "information": [row]}]).encode("utf-8")
+            return daily_collection.HttpResponse(status=200, body=body)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            collector = daily_collection.ClarityCollector(
+                root,
+                {"CLARITY_PROJECT_ID": "project", "CLARITY_EXPORT_TOKEN": "token"},
+                transport=transport,
+            )
+            outcome = collector.collect(now=datetime(2026, 7, 12, 0, 30, tzinfo=timezone.utc))
+            self.assertEqual(outcome.successful_packs, 3)
+            self.assertEqual(outcome.failed_packs, 1)
+            manifest = json.loads(
+                (
+                    root
+                    / "data"
+                    / "raw"
+                    / "clarity"
+                    / "snapshot_id=2026-07-12T00-00-00Z"
+                    / "query_pack=url_country_device"
+                    / "manifest.json"
+                ).read_text(encoding="utf-8")
+            )
+            self.assertTrue(manifest["schema_mismatch"])
+            self.assertEqual(manifest["missing_dimensions"], ["URL"])
+
+    def test_dns_failures_can_be_retried_by_later_health_check(self) -> None:
+        self.assertIsNotNone(daily_collection)
+
+        def dns_failure(url: str, headers: dict[str, str]) -> daily_collection.HttpResponse:
+            return daily_collection.HttpResponse(
+                status=599,
+                body=b"<urlopen error [Errno 8] nodename nor servname provided, or not known>",
+            )
+
+        success_calls: list[str] = []
+
+        def success(url: str, headers: dict[str, str]) -> daily_collection.HttpResponse:
+            success_calls.append(url)
+            body = json.dumps(
+                [
+                    {
+                        "metricName": "Traffic",
+                        "information": [
+                            {
+                                "Url": "https://shop.test/products/a",
+                                "Device": "Mobile",
+                                "Channel": "Direct",
+                                "Source": "google",
+                                "Medium": "cpc",
+                                "Campaign": "brand",
+                                "Country/Region": "US",
+                                "totalSessionCount": "1",
+                            }
+                        ],
+                    }
+                ]
+            ).encode("utf-8")
+            return daily_collection.HttpResponse(status=200, body=body)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            settings = {"CLARITY_PROJECT_ID": "project", "CLARITY_EXPORT_TOKEN": "token"}
+            first = daily_collection.ClarityCollector(root, settings, transport=dns_failure).collect(
+                now=datetime(2026, 7, 12, 0, 30, tzinfo=timezone.utc)
+            )
+            second = daily_collection.ClarityCollector(root, settings, transport=success).collect(
+                now=datetime(2026, 7, 12, 8, 30, tzinfo=timezone.utc)
+            )
+            self.assertEqual(first.successful_packs, 0)
+            self.assertEqual(second.successful_packs, 4)
+            self.assertEqual(len(success_calls), 4)
 
 
 if __name__ == "__main__":
