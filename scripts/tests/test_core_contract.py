@@ -70,6 +70,64 @@ class CoreContractTests(unittest.TestCase):
             ledger.fail(run_id, "overall", "temporary network failure")
             self.assertFalse(ledger.reserve(run_id, "overall", allow_retry=True))
 
+    def test_clarity_ledger_allows_one_schema_mismatch_retry(self) -> None:
+        self.assertIsNotNone(clarity_export)
+        with tempfile.TemporaryDirectory() as directory:
+            ledger = clarity_export.ClarityRunLedger(Path(directory) / "runs.jsonl")
+            run_id = "2026-07-12T00:30:00Z"
+            self.assertTrue(ledger.reserve(run_id, "url_country_device"))
+            ledger.schema_mismatch(run_id, "url_country_device", "missing Country/Region", retryable=True)
+            self.assertTrue(ledger.reserve(run_id, "url_country_device"))
+            self.assertEqual(ledger.request_count(run_id[:10]), 2)
+            ledger.schema_mismatch(run_id, "url_country_device", "missing Country/Region", retryable=True)
+            self.assertFalse(ledger.reserve(run_id, "url_country_device"))
+
+    def test_url_country_device_tolerates_missing_country_region_only(self) -> None:
+        self.assertIsNotNone(clarity_export)
+        parsed = clarity_export.parse_clarity_payload(
+            [
+                {
+                    "metricName": "Traffic",
+                    "information": [
+                        {
+                            "Url": "https://shop.test/products/a",
+                            "Device": "Mobile",
+                            "totalSessionCount": "1",
+                        }
+                    ],
+                }
+            ],
+            query_pack="url_country_device",
+            snapshot_id="2026-07-12T00:30:00Z",
+        )
+        self.assertFalse(parsed.schema_mismatch)
+        self.assertEqual(parsed.missing_dimensions, ("Country/Region",))
+        self.assertEqual(parsed.degraded_dimensions, ("Country/Region",))
+        facts = clarity_export.build_behavior_facts(parsed.metric_rows)
+        self.assertIsNone(facts[0]["country_region"])
+
+    def test_url_country_device_requires_url_and_device(self) -> None:
+        self.assertIsNotNone(clarity_export)
+        parsed = clarity_export.parse_clarity_payload(
+            [
+                {
+                    "metricName": "Traffic",
+                    "information": [
+                        {
+                            "Device": "Mobile",
+                            "Country/Region": "US",
+                            "totalSessionCount": "1",
+                        }
+                    ],
+                }
+            ],
+            query_pack="url_country_device",
+            snapshot_id="2026-07-12T00:30:00Z",
+        )
+        self.assertTrue(parsed.schema_mismatch)
+        self.assertEqual(parsed.missing_dimensions, ("URL",))
+        self.assertEqual(parsed.degraded_dimensions, ())
+
     def test_clarity_normalizer_joins_metrics_by_dimensions_not_array_order(self) -> None:
         self.assertIsNotNone(clarity_export)
         payload = [

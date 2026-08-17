@@ -99,6 +99,7 @@ class ClarityCollector:
         if now < anchor:
             anchor -= timedelta(days=1)
         snapshot_id = _format_utc(anchor)
+        self.ledger.release_dns_failures(snapshot_id)
         window_start = _format_utc(anchor - timedelta(days=1))
         window_end = snapshot_id
         manifests: list[dict[str, Any]] = []
@@ -148,6 +149,8 @@ class ClarityCollector:
                         "truncation_risk": largest_metric_rows >= 1000,
                         "coverage_status": "partial" if largest_metric_rows >= 1000 else "complete",
                         "schema_mismatch": parsed.schema_mismatch,
+                        "missing_dimensions": list(parsed.missing_dimensions),
+                        "degraded_dimensions": list(parsed.degraded_dimensions),
                         "metric_row_counts": metric_row_counts,
                         "raw_response_path": str(response_path),
                     }
@@ -155,16 +158,33 @@ class ClarityCollector:
                         json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True),
                         encoding="utf-8",
                     )
-                    self.ledger.complete(
-                        snapshot_id,
-                        query_pack,
-                        response_hash=manifest["response_hash"],
-                        row_count=largest_metric_rows,
-                    )
                     if not parsed.schema_mismatch and not manifest["truncation_risk"]:
+                        self.ledger.complete(
+                            snapshot_id,
+                            query_pack,
+                            response_hash=manifest["response_hash"],
+                            row_count=largest_metric_rows,
+                        )
                         self.warehouse.persist_clarity_snapshot(manifest, parsed)
+                        successful += 1
+                    elif parsed.schema_mismatch:
+                        expected = ", ".join(QUERY_PACKS[query_pack])
+                        self.ledger.schema_mismatch(
+                            snapshot_id,
+                            query_pack,
+                            f"missing expected dimensions for {query_pack}; expected={expected}",
+                            retryable=query_pack == "url_country_device" and not manifest["truncation_risk"],
+                        )
+                        failed += 1
+                    else:
+                        self.ledger.complete(
+                            snapshot_id,
+                            query_pack,
+                            response_hash=manifest["response_hash"],
+                            row_count=largest_metric_rows,
+                        )
+                        failed += 1
                     manifests.append(manifest)
-                    successful += 1
                     break
 
                 error = f"http_status={response.status}; body={response.body[:200].decode('utf-8', errors='replace')}"
