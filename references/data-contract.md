@@ -19,6 +19,8 @@ Each successful query stores `response.json` and `manifest.json`. A manifest inc
 
 Store every Clarity metric information row with `snapshot_id`, `query_pack`, `metric_name`, `row_index`, nullable raw dimensions, canonical URL, numeric fields, and raw JSON. Never join metric arrays by row position. Preserve `null` and empty dimensions as received.
 
+For `url_country_device`, if the Clarity Export API returns `URL` and `Device` but omits `Country/Region`, treat the slice as degraded complete: preserve rows with `country_region = null`, add `missing_dimensions` and `degraded_dimensions` to the manifest, and do not count it as a blocking schema mismatch. Missing `URL` or `Device` remains a schema mismatch.
+
 Use only the `URL × Device × Channel` slice for aggregate friction summaries to avoid summing overlapping query packs. A response where any metric reaches 1,000 rows is `partial`; preserve its raw response and manifest, but do not write its facts into DuckDB or use it as CRO evidence.
 
 The snapshot anchor is a configured fixed UTC clock time. Its manifest contains an exact 24-hour start/end range and is the canonical window definition; its directory key must never be interpreted as a store-calendar day. A rerun for the same anchor reuses the existing ledger entry rather than creating an overlapping slice.

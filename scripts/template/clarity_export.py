@@ -28,6 +28,8 @@ class ParsedClarityPayload:
     metric_rows: list[dict[str, Any]]
     metric_row_counts: dict[str, int]
     schema_mismatch: bool
+    missing_dimensions: tuple[str, ...]
+    degraded_dimensions: tuple[str, ...]
 
 
 DIMENSION_FIELDS = {
@@ -134,11 +136,27 @@ def parse_clarity_payload(
                     "raw_information_json": json.dumps(information_row, ensure_ascii=False, sort_keys=True),
                 }
             )
-    expected = set(QUERY_PACKS[query_pack])
+    missing_dimensions = tuple(
+        dimension for dimension in QUERY_PACKS[query_pack] if dimension not in observed_fields
+    )
+    tolerated_missing_dimensions: tuple[str, ...] = ()
+    if query_pack == "url_country_device":
+        tolerated_missing_dimensions = ("Country/Region",)
+    blocking_missing_dimensions = tuple(
+        dimension
+        for dimension in missing_dimensions
+        if dimension not in tolerated_missing_dimensions
+    )
     return ParsedClarityPayload(
         metric_rows=rows,
         metric_row_counts=counts,
-        schema_mismatch=bool(expected - observed_fields),
+        schema_mismatch=bool(blocking_missing_dimensions),
+        missing_dimensions=missing_dimensions,
+        degraded_dimensions=tuple(
+            dimension
+            for dimension in missing_dimensions
+            if dimension in tolerated_missing_dimensions
+        ),
     )
 
 
@@ -227,15 +245,41 @@ class ClarityRunLedger:
     def entry(self, run_id: str, query_pack: str) -> dict[str, Any]:
         return dict(self._latest_entries().get((run_id, query_pack), {}))
 
+    def release_dns_failures(self, run_id: str) -> int:
+        """Release same-day DNS failures so a later health check can retry them.
+
+        DNS/name-resolution errors never reach the Clarity API, so they should
+        not permanently consume the local daily request ledger.
+        """
+        markers = (
+            "nodename nor servname",
+            "NameResolutionError",
+            "Temporary failure in name resolution",
+            "Timeout while contacting DNS servers",
+            "Unable to find the server",
+            "hostname lookup error",
+        )
+        released = 0
+        for (entry_run_id, query_pack), item in self._latest_entries().items():
+            if entry_run_id != run_id or item.get("status") != "failed":
+                continue
+            error = str(item.get("error", ""))
+            if not any(marker in error for marker in markers):
+                continue
+            self._append({**item, "status": "released"})
+            released += 1
+        return released
+
     def reserve(self, run_id: str, query_pack: str, allow_retry: bool = False) -> bool:
         if query_pack not in QUERY_PACKS:
             raise ValueError(f"Unknown Clarity query pack: {query_pack}")
         prior = self.entry(run_id, query_pack)
-        if prior and not (
-            allow_retry
-            and prior.get("status") == "failed"
-            and int(prior.get("attempt", 1)) < 2
-        ):
+        if prior.get("status") == "released":
+            prior = {}
+        retryable = (
+            prior.get("status") == "schema_mismatch" and bool(prior.get("retryable_schema_mismatch"))
+        ) or (allow_retry and prior.get("status") == "failed")
+        if prior and not (retryable and int(prior.get("attempt", 1)) < 2):
             return False
         utc_date = run_id[:10]
         if self.request_count(utc_date) >= self.max_daily_requests:
@@ -274,6 +318,19 @@ class ClarityRunLedger:
                 "truncation_risk": truncated,
             }
         )
+
+    def schema_mismatch(
+        self,
+        run_id: str,
+        query_pack: str,
+        error: str,
+        *,
+        retryable: bool = False,
+    ) -> None:
+        prior = self.entry(run_id, query_pack)
+        if not prior:
+            raise RuntimeError("Reserve a Clarity query before recording its schema mismatch.")
+        self._append({**prior, "status": "schema_mismatch", "error": error, "retryable_schema_mismatch": retryable})
 
     def fail(self, run_id: str, query_pack: str, error: str) -> None:
         prior = self.entry(run_id, query_pack)
