@@ -43,6 +43,8 @@ class WeeklyReportTests(unittest.TestCase):
                         "sessions": 20.0,
                         "add_to_cart": 4.0 if index < 7 else 6.0,
                         "begin_checkout": 2.0 if index < 7 else 3.0,
+                        "ecommerce_purchases": 1.0,
+                        "ga4_revenue": 100.0,
                     }
                     for index, value in enumerate(dates)
                 ],
@@ -75,6 +77,58 @@ class WeeklyReportTests(unittest.TestCase):
             self.assertIn(comparison_period, result.html_path.read_text(encoding="utf-8"))
             self.assertIn("GA4 加购", result.markdown_path.read_text(encoding="utf-8"))
             self.assertIn("GA4 开始结账", result.html_path.read_text(encoding="utf-8"))
+            self.assertEqual(payload["current"]["purchase_count_gap"], 0.0)
+            self.assertEqual(payload["current"]["purchase_tracking_rate"], 1.0)
+
+    def test_weekly_report_flags_shopify_vs_ga4_purchase_gap_without_repairing(self) -> None:
+        self.assertIsNotNone(reporting)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            store = warehouse.AnalyticsWarehouse(root)
+            dates = period(date(2026, 6, 29))
+            store.persist_source_daily_metrics(
+                "shopify",
+                "run",
+                [{"date": value, "orders": 1, "revenue": 100.0} for value in dates],
+            )
+            store.persist_source_daily_metrics(
+                "ga4",
+                "run",
+                [
+                    {
+                        "date": value,
+                        "sessions": 20.0,
+                        "ecommerce_purchases": 0.0 if index == 13 else 1.0,
+                        "ga4_revenue": 0.0 if index == 13 else 100.0,
+                    }
+                    for index, value in enumerate(dates)
+                ],
+            )
+            store.persist_source_daily_metrics(
+                "google_ads",
+                "run",
+                [{"date": value, "ad_spend": 1.0} for value in dates],
+            )
+            store.persist_source_daily_metrics(
+                "gsc",
+                "run",
+                [{"date": value, "seo_clicks": 1.0, "seo_impressions": 10.0} for value in dates],
+            )
+
+            result = reporting.generate_weekly_report(store, root / "outputs")
+            current = result.payload["current"]
+            self.assertEqual(current["orders"], 7.0)
+            self.assertEqual(current["ga4_purchases"], 6.0)
+            self.assertEqual(current["purchase_count_gap"], 1.0)
+            self.assertEqual(current["purchase_tracking_rate"], 6 / 7)
+            self.assertEqual(current["purchase_integrity_status"], "high_risk")
+
+            markdown = result.markdown_path.read_text(encoding="utf-8")
+            html = result.html_path.read_text(encoding="utf-8")
+            self.assertIn("数据风险：Shopify 7 单，GA4 purchase 6 单", markdown)
+            self.assertIn("BigQuery transaction_id", markdown)
+            self.assertIn("本报告不自动补发", markdown)
+            self.assertIn("Shopify vs GA4 purchase", html)
 
     def test_weekly_report_adds_clarity_friction_as_behavior_evidence(self) -> None:
         self.assertIsNotNone(reporting)

@@ -49,6 +49,8 @@ At the top of both HTML and Markdown outputs, show `周报周期` for the curren
 
 The core funnel must compare current versus previous GA4 Sessions, `add_to_cart`, `begin_checkout`, and Shopify orders. Show add-to-cart rate, cart-to-checkout rate, and store conversion rate as percentages.
 
+Compare Shopify orders/revenue with GA4 ecommerce purchases/revenue for both weeks. Treat a positive Shopify-minus-GA4 order gap as a high-risk tracking signal. The aggregate comparison does not prove which transactions are missing: require BigQuery `transaction_id` against Shopify paid, non-test orders for order-level reconciliation. This skill is read-only and must never send Measurement Protocol events; hand confirmed recovery work to `$ga4-data-analysis`.
+
 Treat Clarity as a separate evidence layer. Include observed facts, cautious inferences, reproducible Clarity filters, and validation actions; never claim causal behavior from aggregate metrics or recordings. Read [reporting-policy.md](references/reporting-policy.md) for metric and narrative rules.
 
 When `LLM_MODE=openai` is configured, use `analysis_context_*.json` and the optional narrative helper. Keep deterministic JSON/Markdown/HTML reports valid if the model call fails.

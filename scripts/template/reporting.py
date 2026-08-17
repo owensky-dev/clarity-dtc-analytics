@@ -77,14 +77,29 @@ def _period_summary(store: AnalyticsWarehouse, start: date, end: date) -> dict[s
     revenue = _sum(shopify, "revenue")
     orders = _sum(shopify, "orders")
     sessions = _sum(ga4, "sessions")
+    ga4_purchases = _sum(ga4, "ecommerce_purchases")
+    ga4_purchase_revenue = _sum(ga4, "ga4_revenue")
     add_to_cart = _sum(ga4, "add_to_cart")
     begin_checkout = _sum(ga4, "begin_checkout")
     ad_spend = _sum(ads, "ad_spend")
     ad_conversions = _sum(ads, "ad_conversions")
     ad_conversion_value = _sum(ads, "ad_conversion_value")
+    purchase_count_gap = orders - ga4_purchases
+    if abs(purchase_count_gap) < 0.001:
+        purchase_integrity_status = "passed"
+    elif purchase_count_gap > 0:
+        purchase_integrity_status = "high_risk"
+    else:
+        purchase_integrity_status = "overcount"
     return {
         "revenue": revenue,
         "orders": orders,
+        "ga4_purchases": ga4_purchases,
+        "ga4_purchase_revenue": ga4_purchase_revenue,
+        "purchase_count_gap": purchase_count_gap,
+        "purchase_revenue_gap": revenue - ga4_purchase_revenue,
+        "purchase_tracking_rate": ga4_purchases / orders if orders else (1.0 if ga4_purchases == 0 else 0.0),
+        "purchase_integrity_status": purchase_integrity_status,
         "sessions": sessions,
         "add_to_cart": add_to_cart,
         "begin_checkout": begin_checkout,
@@ -108,6 +123,15 @@ def _period_summary(store: AnalyticsWarehouse, start: date, end: date) -> dict[s
 def _markdown(payload: dict) -> str:
     current = payload["current"]
     previous = payload["previous"]
+    if current["purchase_integrity_status"] == "passed":
+        purchase_health = (
+            f"- Shopify vs GA4 purchase：通过；两端均为 {current['orders']:.0f} 单。"
+        )
+    else:
+        purchase_health = (
+            f"- 数据风险：Shopify {current['orders']:.0f} 单，GA4 purchase {current['ga4_purchases']:.0f} 单；"
+            "聚合差异需用 BigQuery transaction_id 与 Shopify paid order 逐单核验，本报告不自动补发。"
+        )
     lines = [
         "# 独立站周度 CRO 报告",
         "",
@@ -115,6 +139,7 @@ def _markdown(payload: dict) -> str:
         f"对比周期：{payload['window']['previous_start']} 至 {payload['window']['previous_end']}（前一完整周）",
         "",
         "## 管理层摘要",
+        purchase_health,
         f"- Shopify 收入：{current['revenue']:.2f}；订单：{current['orders']:.0f}。",
         f"- GA4 Sessions：{current['sessions']:.0f}；全站转化率：{(current['conversion_rate'] or 0):.2%}。",
         f"- Google Ads 花费：{current['ad_spend']:.2f}；CPA：{'n/a' if current['cpa'] is None else f'{current['cpa']:.2f}'}。",
@@ -132,6 +157,10 @@ def _markdown(payload: dict) -> str:
         "## 数据健康",
         "- 本报告仅在 GA4、Shopify、Google Ads、GSC 均覆盖当前与上周连续 14 天时生成。",
         "- GA4 加购与开始结账使用独立日期级事件查询，不与渠道 Sessions 查询混合汇总。",
+        (
+            f"- Shopify vs GA4 purchase：{current['orders']:.0f} 单 vs {current['ga4_purchases']:.0f} 单；"
+            f"追踪覆盖率 {current['purchase_tracking_rate']:.2%}，收入差 {current['purchase_revenue_gap']:.2f}。"
+        ),
     ]
     if payload.get("cro_candidates"):
         lines += ["", "## CRO 测试候选"]
@@ -148,6 +177,7 @@ def _html_report(payload: dict) -> str:
         for label, value in (
             ("Shopify 收入", f"{current['revenue']:.2f}"),
             ("订单", f"{current['orders']:.0f}"),
+            ("Shopify vs GA4 purchase", f"{current['orders']:.0f} vs {current['ga4_purchases']:.0f}"),
             ("GA4 Sessions", f"{current['sessions']:.0f}"),
             ("全站转化率", f"{(current['conversion_rate'] or 0):.2%}"),
             ("Google Ads CPA", "n/a" if current["cpa"] is None else f"{current['cpa']:.2f}"),
@@ -167,12 +197,21 @@ def _html_report(payload: dict) -> str:
         for item in payload.get("cro_candidates", [])
     )
     candidate_section = f"<h2>CRO 测试候选</h2><ul>{candidates}</ul>" if candidates else ""
+    if current["purchase_integrity_status"] == "passed":
+        purchase_notice = (
+            f"<p><strong>Purchase 完整性：</strong>Shopify 与 GA4 均为 {current['orders']:.0f} 单。</p>"
+        )
+    else:
+        purchase_notice = (
+            f"<p><strong>数据风险：</strong>Shopify {current['orders']:.0f} 单，GA4 purchase {current['ga4_purchases']:.0f} 单；"
+            "需用 BigQuery transaction_id 逐单核验，本报告不自动补发。</p>"
+        )
     return (
         "<!doctype html><html lang=\"zh-CN\"><meta charset=\"utf-8\">"
         "<title>独立站周度 CRO 报告</title>"
         "<style>body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;max-width:900px;margin:40px auto;color:#18231c}table{border-collapse:collapse;width:100%}th,td{padding:10px;border-bottom:1px solid #ddd;text-align:left}</style>"
         f"<h1>独立站周度 CRO 报告</h1><p>周报周期：{payload['window']['current_start']} 至 {payload['window']['current_end']}</p>"
-        f"<p>对比周期：{payload['window']['previous_start']} 至 {payload['window']['previous_end']}（前一完整周）</p><table>{rows}</table>"
+        f"<p>对比周期：{payload['window']['previous_start']} 至 {payload['window']['previous_end']}（前一完整周）</p>{purchase_notice}<table>{rows}</table>"
         f"<h2>核心漏斗：本周 vs 上周</h2><table><thead><tr><th>阶段</th><th>本周</th><th>上周</th><th>本周效率</th><th>上周效率</th></tr></thead><tbody>{funnel_rows}</tbody></table>"
         f"{candidate_section}<p>Clarity 仅作为行为证据；请复核代表性录像或热图后再确定因果与测试方案。</p></html>"
     )

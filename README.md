@@ -14,6 +14,7 @@
 - 输出 HTML、Markdown、JSON 和供可选 AI 叙事使用的结构化分析上下文
 - 在 HTML 与 Markdown 顶部清晰标注“周报周期”和“对比周期”
 - 周报按本周与上周展示 Sessions → 加购 → 开始结账 → Shopify 订单漏斗
+- 对比 Shopify 订单/收入与 GA4 purchase/收入，发现漏记风险时要求用 BigQuery `transaction_id` 逐单核验；本 Skill 只报告、不补发事件
 
 ## 使用方式
 
