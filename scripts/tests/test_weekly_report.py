@@ -24,6 +24,27 @@ def period(start: date) -> list[str]:
     return [(start + timedelta(days=offset)).isoformat() for offset in range(14)]
 
 
+def shopify_day(
+    value: str,
+    *,
+    orders: int = 1,
+    revenue: float = 100.0,
+    online_store_orders: int = 1,
+    online_store_revenue: float = 100.0,
+    offsite_orders: int = 0,
+    offsite_revenue: float = 0.0,
+) -> dict:
+    return {
+        "date": value,
+        "orders": orders,
+        "revenue": revenue,
+        "online_store_orders": online_store_orders,
+        "online_store_revenue": online_store_revenue,
+        "offsite_orders": offsite_orders,
+        "offsite_revenue": offsite_revenue,
+    }
+
+
 class WeeklyReportTests(unittest.TestCase):
     def test_weekly_report_uses_shopify_revenue_and_four_source_window(self) -> None:
         self.assertIsNotNone(reporting)
@@ -32,7 +53,7 @@ class WeeklyReportTests(unittest.TestCase):
             store = warehouse.AnalyticsWarehouse(root)
             dates = period(date(2026, 6, 29))
             store.persist_source_daily_metrics(
-                "shopify", "run", [{"date": value, "orders": 1, "revenue": 100.0} for value in dates]
+                "shopify", "run", [shopify_day(value) for value in dates]
             )
             store.persist_source_daily_metrics(
                 "ga4",
@@ -89,7 +110,20 @@ class WeeklyReportTests(unittest.TestCase):
             store.persist_source_daily_metrics(
                 "shopify",
                 "run",
-                [{"date": value, "orders": 1, "revenue": 100.0} for value in dates],
+                [
+                    shopify_day(value)
+                    if index != 13
+                    else shopify_day(
+                        value,
+                        orders=2,
+                        revenue=140.0,
+                        online_store_orders=1,
+                        online_store_revenue=100.0,
+                        offsite_orders=1,
+                        offsite_revenue=40.0,
+                    )
+                    for index, value in enumerate(dates)
+                ],
             )
             store.persist_source_daily_metrics(
                 "ga4",
@@ -117,18 +151,25 @@ class WeeklyReportTests(unittest.TestCase):
 
             result = reporting.generate_weekly_report(store, root / "outputs")
             current = result.payload["current"]
-            self.assertEqual(current["orders"], 7.0)
+            self.assertEqual(current["orders"], 8.0)
+            self.assertEqual(current["revenue"], 740.0)
+            self.assertEqual(current["online_store_orders"], 7.0)
+            self.assertEqual(current["online_store_revenue"], 700.0)
+            self.assertEqual(current["offsite_orders"], 1.0)
+            self.assertEqual(current["offsite_revenue"], 40.0)
             self.assertEqual(current["ga4_purchases"], 6.0)
             self.assertEqual(current["purchase_count_gap"], 1.0)
+            self.assertEqual(current["purchase_revenue_gap"], 100.0)
             self.assertEqual(current["purchase_tracking_rate"], 6 / 7)
             self.assertEqual(current["purchase_integrity_status"], "high_risk")
 
             markdown = result.markdown_path.read_text(encoding="utf-8")
             html = result.html_path.read_text(encoding="utf-8")
-            self.assertIn("数据风险：Shopify 7 单，GA4 purchase 6 单", markdown)
+            self.assertIn("数据风险：Shopify Online Store 7 单，GA4 purchase 6 单", markdown)
+            self.assertIn("站外 1 单 / 40.00 单列", markdown)
             self.assertIn("BigQuery transaction_id", markdown)
             self.assertIn("本报告不自动补发", markdown)
-            self.assertIn("Shopify vs GA4 purchase", html)
+            self.assertIn("Online Store vs GA4 purchase", html)
 
     def test_weekly_report_adds_clarity_friction_as_behavior_evidence(self) -> None:
         self.assertIsNotNone(reporting)
@@ -137,7 +178,7 @@ class WeeklyReportTests(unittest.TestCase):
             store = warehouse.AnalyticsWarehouse(root)
             dates = period(date(2026, 6, 29))
             for source, rows in {
-                "shopify": [{"date": value, "orders": 1, "revenue": 100.0} for value in dates],
+                "shopify": [shopify_day(value) for value in dates],
                 "ga4": [{"date": value, "sessions": 20.0} for value in dates],
                 "google_ads": [{"date": value, "ad_spend": 1.0, "ad_clicks": 1.0, "ad_conversions": 0.0, "ad_conversion_value": 0.0} for value in dates],
                 "gsc": [{"date": value, "seo_clicks": 1.0, "seo_impressions": 10.0} for value in dates],
@@ -164,6 +205,22 @@ class WeeklyReportTests(unittest.TestCase):
             self.assertIn("验证动作", payload["cro_candidates"][0])
             self.assertIn("https://shop.test/p", result.markdown_path.read_text(encoding="utf-8"))
             self.assertIn("https://shop.test/p", result.html_path.read_text(encoding="utf-8"))
+
+    def test_weekly_report_fails_closed_on_legacy_shopify_daily_schema(self) -> None:
+        self.assertIsNotNone(reporting)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            store = warehouse.AnalyticsWarehouse(root)
+            dates = period(date(2026, 6, 29))
+            for source, rows in {
+                "shopify": [{"date": value, "orders": 1, "revenue": 100.0} for value in dates],
+                "ga4": [{"date": value, "sessions": 20.0} for value in dates],
+                "google_ads": [{"date": value, "ad_spend": 1.0} for value in dates],
+                "gsc": [{"date": value, "seo_clicks": 1.0, "seo_impressions": 10.0} for value in dates],
+            }.items():
+                store.persist_source_daily_metrics(source, "run", rows)
+            with self.assertRaises(reporting.DataCoverageError):
+                reporting.generate_weekly_report(store, root / "outputs")
 
 
 if __name__ == "__main__":

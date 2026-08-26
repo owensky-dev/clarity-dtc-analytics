@@ -20,24 +20,73 @@ def _iso_date(value: Any) -> str:
     return text
 
 
+SHOPIFY_ORDER_FIELDS = {
+    "date",
+    "total_price",
+    "financial_status",
+    "test",
+    "cancelled_at",
+    "source_name",
+}
+
+
+def _truthy(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in {"1", "true", "yes"}
+
+
+def _is_business_order(row: dict[str, Any]) -> bool:
+    missing = sorted(SHOPIFY_ORDER_FIELDS.difference(row))
+    if missing:
+        raise ValueError(f"Shopify order row is missing required fields: {', '.join(missing)}")
+    return (
+        str(row.get("financial_status") or "").upper() == "PAID"
+        and not _truthy(row.get("test"))
+        and not str(row.get("cancelled_at") or "").strip()
+    )
+
+
 def shopify_daily_metrics(
     order_rows: list[dict[str, Any]], *, start_date: str, end_date: str
 ) -> list[dict[str, Any]]:
-    """Return a complete date series so zero sales do not look like missing collection."""
-    grouped: dict[str, dict[str, float]] = defaultdict(lambda: {"orders": 0, "revenue": 0.0})
+    """Return paid, non-test, non-cancelled business and channel totals by report date."""
+    grouped: dict[str, dict[str, float]] = defaultdict(
+        lambda: {
+            "orders": 0,
+            "revenue": 0.0,
+            "online_store_orders": 0,
+            "online_store_revenue": 0.0,
+            "offsite_orders": 0,
+            "offsite_revenue": 0.0,
+        }
+    )
     for row in order_rows:
-        date_value = str(row.get("date") or row.get("created_at", ""))[:10]
-        if not date_value:
+        if not _is_business_order(row):
             continue
+        date_value = str(row["date"])
+        amount = _number(row["total_price"])
         grouped[date_value]["orders"] += 1
-        grouped[date_value]["revenue"] += _number(row.get("total_price", row.get("revenue")))
+        grouped[date_value]["revenue"] += amount
+        if str(row["source_name"] or "").lower() == "web":
+            grouped[date_value]["online_store_orders"] += 1
+            grouped[date_value]["online_store_revenue"] += amount
+        else:
+            grouped[date_value]["offsite_orders"] += 1
+            grouped[date_value]["offsite_revenue"] += amount
     start = date.fromisoformat(start_date)
     end = date.fromisoformat(end_date)
+    if start > end:
+        raise ValueError("Shopify start_date must not be after end_date")
     return [
         {
             "date": current.isoformat(),
             "orders": int(grouped[current.isoformat()]["orders"]),
             "revenue": round(grouped[current.isoformat()]["revenue"], 2),
+            "online_store_orders": int(grouped[current.isoformat()]["online_store_orders"]),
+            "online_store_revenue": round(grouped[current.isoformat()]["online_store_revenue"], 2),
+            "offsite_orders": int(grouped[current.isoformat()]["offsite_orders"]),
+            "offsite_revenue": round(grouped[current.isoformat()]["offsite_revenue"], 2),
         }
         for current in (start + timedelta(days=offset) for offset in range((end - start).days + 1))
     ]

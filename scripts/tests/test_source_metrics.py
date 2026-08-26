@@ -18,17 +18,84 @@ class SourceMetricsTests(unittest.TestCase):
     def test_shopify_rollup_preserves_zero_order_days(self) -> None:
         self.assertIsNotNone(source_metrics)
         rows = source_metrics.shopify_daily_metrics(
-            [{"date": "2026-07-12", "total_price": "125.50", "order_id": "gid://shopify/Order/1"}],
+            [
+                {
+                    "date": "2026-07-12",
+                    "total_price": "125.50",
+                    "order_id": "gid://shopify/Order/1",
+                    "financial_status": "PAID",
+                    "test": False,
+                    "cancelled_at": "",
+                    "source_name": "web",
+                }
+            ],
             start_date="2026-07-11",
             end_date="2026-07-12",
         )
         self.assertEqual(
             rows,
             [
-                {"date": "2026-07-11", "orders": 0, "revenue": 0.0},
-                {"date": "2026-07-12", "orders": 1, "revenue": 125.5},
+                {
+                    "date": "2026-07-11",
+                    "orders": 0,
+                    "revenue": 0.0,
+                    "online_store_orders": 0,
+                    "online_store_revenue": 0.0,
+                    "offsite_orders": 0,
+                    "offsite_revenue": 0.0,
+                },
+                {
+                    "date": "2026-07-12",
+                    "orders": 1,
+                    "revenue": 125.5,
+                    "online_store_orders": 1,
+                    "online_store_revenue": 125.5,
+                    "offsite_orders": 0,
+                    "offsite_revenue": 0.0,
+                },
             ],
         )
+
+    def test_shopify_rollup_filters_invalid_orders_and_splits_online_from_offsite(self) -> None:
+        self.assertIsNotNone(source_metrics)
+        base = {
+            "date": "2026-08-22",
+            "financial_status": "PAID",
+            "test": False,
+            "cancelled_at": "",
+        }
+        rows = source_metrics.shopify_daily_metrics(
+            [
+                {**base, "total_price": 100, "source_name": "web"},
+                {**base, "total_price": 40, "source_name": "3890849"},
+                {**base, "total_price": 20, "source_name": "web", "financial_status": "PENDING"},
+                {**base, "total_price": 30, "source_name": "web", "test": True},
+                {**base, "total_price": 50, "source_name": "web", "cancelled_at": "2026-08-22T01:00:00Z"},
+            ],
+            start_date="2026-08-22",
+            end_date="2026-08-22",
+        )
+        self.assertEqual(
+            rows[0],
+            {
+                "date": "2026-08-22",
+                "orders": 2,
+                "revenue": 140.0,
+                "online_store_orders": 1,
+                "online_store_revenue": 100.0,
+                "offsite_orders": 1,
+                "offsite_revenue": 40.0,
+            },
+        )
+
+    def test_shopify_rollup_fails_closed_on_missing_order_contract_fields(self) -> None:
+        self.assertIsNotNone(source_metrics)
+        with self.assertRaises(ValueError):
+            source_metrics.shopify_daily_metrics(
+                [{"date": "2026-08-22", "total_price": 100}],
+                start_date="2026-08-22",
+                end_date="2026-08-22",
+            )
 
     def test_ga4_ads_and_gsc_rollups_keep_source_specific_metrics(self) -> None:
         self.assertIsNotNone(source_metrics)

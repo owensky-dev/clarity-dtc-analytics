@@ -4,8 +4,9 @@ import json
 import sys
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 
 TEMPLATE_SCRIPTS = Path(__file__).resolve().parents[1] / "template"
@@ -15,6 +16,15 @@ try:
     import daily_runner
 except ModuleNotFoundError:
     daily_runner = None
+
+
+def date_values(start: str, end: str) -> list[str]:
+    first = date.fromisoformat(start)
+    last = date.fromisoformat(end)
+    return [
+        (first + timedelta(days=offset)).isoformat()
+        for offset in range((last - first).days + 1)
+    ]
 
 
 class DailyRunnerTests(unittest.TestCase):
@@ -37,10 +47,22 @@ class DailyRunnerTests(unittest.TestCase):
             return daily_runner.HttpResponse(200, body)
 
         def source_rows(source: str):
+            metrics = (
+                {
+                    "orders": 0,
+                    "revenue": 0.0,
+                    "online_store_orders": 0,
+                    "online_store_revenue": 0.0,
+                    "offsite_orders": 0,
+                    "offsite_revenue": 0.0,
+                }
+                if source == "shopify"
+                else {"sessions": 10.0}
+            )
             return lambda settings, start, end: daily_runner.SourceDataset(
                 dataset="daily",
-                raw_rows=[{"source": source}],
-                daily_metrics=[{"date": "2026-07-11", **({"orders": 0, "revenue": 0.0} if source == "shopify" else {"sessions": 10.0})}],
+                raw_rows=[] if source == "shopify" else [{"source": source}],
+                daily_metrics=[{"date": value, **metrics} for value in date_values(start, end)],
             )
 
         with tempfile.TemporaryDirectory() as directory:
@@ -60,8 +82,22 @@ class DailyRunnerTests(unittest.TestCase):
         self.assertIsNotNone(daily_runner)
 
         def source_rows(source: str):
+            metrics = (
+                {
+                    "orders": 0,
+                    "revenue": 0.0,
+                    "online_store_orders": 0,
+                    "online_store_revenue": 0.0,
+                    "offsite_orders": 0,
+                    "offsite_revenue": 0.0,
+                }
+                if source == "shopify"
+                else {"sessions": 10.0}
+            )
             return lambda settings, start, end: daily_runner.SourceDataset(
-                dataset="daily", raw_rows=[], daily_metrics=[{"date": "2026-07-11", "orders": 0, "revenue": 0.0}]
+                dataset="daily",
+                raw_rows=[],
+                daily_metrics=[{"date": value, **metrics} for value in date_values(start, end)],
             )
 
         with tempfile.TemporaryDirectory() as directory:
@@ -72,7 +108,48 @@ class DailyRunnerTests(unittest.TestCase):
             )
             outcome = runner.run(now=datetime(2026, 7, 12, 0, 30, tzinfo=timezone.utc))
             self.assertEqual(outcome.clarity_successful_packs, 0)
-            self.assertTrue(all(status == "valid_zero" for status in outcome.source_status.values()))
+            self.assertEqual(outcome.source_status["shopify"], "valid_zero")
+            self.assertTrue(
+                all(outcome.source_status[source] == "complete" for source in ("ga4", "gsc", "google_ads"))
+            )
+
+    def test_runner_does_not_generate_weekly_report_when_current_source_fails(self) -> None:
+        self.assertIsNotNone(daily_runner)
+
+        def source_rows(source: str):
+            if source == "gsc":
+                def fail(settings, start, end):
+                    raise RuntimeError("current GSC fetch failed")
+
+                return fail
+            metrics = (
+                {
+                    "orders": 0,
+                    "revenue": 0.0,
+                    "online_store_orders": 0,
+                    "online_store_revenue": 0.0,
+                    "offsite_orders": 0,
+                    "offsite_revenue": 0.0,
+                }
+                if source == "shopify"
+                else {"sessions": 1.0}
+            )
+            return lambda settings, start, end: daily_runner.SourceDataset(
+                dataset="daily",
+                raw_rows=[],
+                daily_metrics=[{"date": value, **metrics} for value in date_values(start, end)],
+            )
+
+        with tempfile.TemporaryDirectory() as directory, patch("reporting.generate_weekly_report") as generate:
+            runner = daily_runner.DailyIngestionRunner(
+                Path(directory),
+                {"CLARITY_PROJECT_ID": "project"},
+                source_fetchers={source: source_rows(source) for source in ("ga4", "gsc", "google_ads", "shopify")},
+            )
+            outcome = runner.run(now=datetime(2026, 7, 12, 0, 30, tzinfo=timezone.utc))
+            self.assertEqual(outcome.source_status["gsc"], "failed")
+            self.assertIsNone(outcome.weekly_report_path)
+            generate.assert_not_called()
 
 
 if __name__ == "__main__":

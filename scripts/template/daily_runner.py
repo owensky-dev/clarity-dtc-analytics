@@ -22,6 +22,7 @@ class SourceDataset:
     dataset: str
     raw_rows: list[dict[str, Any]]
     daily_metrics: list[dict[str, Any]]
+    manifest_metadata: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -100,6 +101,9 @@ class DailyIngestionRunner:
                     dataset=dataset.dataset,
                     raw_rows=dataset.raw_rows,
                     daily_metrics=dataset.daily_metrics,
+                    manifest_metadata=dataset.manifest_metadata,
+                    expected_start_date=start.isoformat(),
+                    expected_end_date=logical_end.isoformat(),
                 )
                 source_status[source] = manifest["status"]
             except Exception as error:
@@ -112,20 +116,22 @@ class DailyIngestionRunner:
             now=now,
         )
         weekly_report_path = None
-        try:
-            from ai_narrative import write_optional_narrative
-            from reporting import generate_weekly_report
+        complete_statuses = {"complete", "valid_zero"}
+        if all(source_status.get(source) in complete_statuses for source in CORE_SOURCES):
+            try:
+                from ai_narrative import write_optional_narrative
+                from reporting import generate_weekly_report
 
-            weekly = generate_weekly_report(self.warehouse, self.project_root / "outputs")
-            write_optional_narrative(
-                weekly.payload,
-                self.settings,
-                weekly.json_path.with_name(weekly.json_path.stem + "_ai.md"),
-            )
-            weekly_report_path = weekly.html_path
-        except Exception:
-            # Daily collection must remain useful before a full four-source history exists.
-            pass
+                weekly = generate_weekly_report(self.warehouse, self.project_root / "outputs")
+                write_optional_narrative(
+                    weekly.payload,
+                    self.settings,
+                    weekly.json_path.with_name(weekly.json_path.stem + "_ai.md"),
+                )
+                weekly_report_path = weekly.html_path
+            except Exception:
+                # Daily collection must remain useful before a full four-source history exists.
+                pass
         return DailyRunOutcome(
             clarity_successful_packs=clarity_successful_packs,
             source_status=source_status,

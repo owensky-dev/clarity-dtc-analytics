@@ -25,6 +25,9 @@ class SourceFetcherTests(unittest.TestCase):
                 "name": "#1001",
                 "createdAt": "2026-07-12T01:15:00Z",
                 "displayFinancialStatus": "PAID",
+                "test": False,
+                "cancelledAt": None,
+                "sourceName": "web",
                 "currentTotalPriceSet": {"shopMoney": {"amount": "125.50", "currencyCode": "USD"}},
             },
             report_timezone="America/Los_Angeles",
@@ -32,17 +35,25 @@ class SourceFetcherTests(unittest.TestCase):
         self.assertEqual(record["date"], "2026-07-11")
         self.assertEqual(record["order_id"], "gid://shopify/Order/1")
         self.assertEqual(record["total_price"], 125.5)
+        self.assertFalse(record["test"])
+        self.assertEqual(record["cancelled_at"], "")
 
     def test_shopify_fetcher_pages_graphql_orders(self) -> None:
         self.assertIsNotNone(source_fetchers)
         requested_after: list[str | None] = []
+        requested_queries: list[str] = []
 
         def transport(url: str, headers: dict[str, str], payload: dict) -> source_fetchers.HttpJsonResponse:
             requested_after.append(payload["variables"]["after"])
+            requested_queries.append(payload["variables"]["query"])
             node = {
                 "id": f"gid://shopify/Order/{len(requested_after)}",
                 "name": f"#{len(requested_after)}",
                 "createdAt": "2026-07-12T01:15:00Z",
+                "displayFinancialStatus": "PAID",
+                "test": False,
+                "cancelledAt": None,
+                "sourceName": "web",
                 "currentTotalPriceSet": {"shopMoney": {"amount": "10.00", "currencyCode": "USD"}},
             }
             has_next = len(requested_after) == 1
@@ -59,7 +70,68 @@ class SourceFetcherTests(unittest.TestCase):
             transport=transport,
         )
         self.assertEqual(requested_after, [None, "next"])
+        self.assertEqual(set(requested_queries), {"created_at:>=2026-07-09 created_at:<=2026-07-14"})
         self.assertEqual([row["order_id"] for row in rows], ["gid://shopify/Order/1", "gid://shopify/Order/2"])
+
+    def test_shopify_fetcher_filters_widened_query_back_to_report_timezone_dates(self) -> None:
+        self.assertIsNotNone(source_fetchers)
+
+        def transport(url: str, headers: dict[str, str], payload: dict) -> source_fetchers.HttpJsonResponse:
+            nodes = [
+                {
+                    "id": "outside",
+                    "createdAt": "2026-07-11T06:30:00Z",
+                    "displayFinancialStatus": "PAID",
+                    "test": False,
+                    "cancelledAt": None,
+                    "sourceName": "web",
+                },
+                {
+                    "id": "inside",
+                    "createdAt": "2026-07-11T07:30:00Z",
+                    "displayFinancialStatus": "PAID",
+                    "test": False,
+                    "cancelledAt": None,
+                    "sourceName": "web",
+                },
+            ]
+            body = {
+                "data": {
+                    "orders": {
+                        "pageInfo": {"hasNextPage": False, "endCursor": None},
+                        "edges": [{"node": node} for node in nodes],
+                    }
+                }
+            }
+            return source_fetchers.HttpJsonResponse(200, json.dumps(body).encode("utf-8"))
+
+        rows = source_fetchers.fetch_shopify_orders(
+            shop_domain="shop.test",
+            access_token="token",
+            api_version="2025-10",
+            start_date="2026-07-11",
+            end_date="2026-07-11",
+            report_timezone="America/Los_Angeles",
+            transport=transport,
+        )
+        self.assertEqual([row["order_id"] for row in rows], ["inside"])
+
+    def test_shopify_fetcher_fails_when_orders_connection_is_missing(self) -> None:
+        self.assertIsNotNone(source_fetchers)
+
+        def transport(url: str, headers: dict[str, str], payload: dict) -> source_fetchers.HttpJsonResponse:
+            return source_fetchers.HttpJsonResponse(200, json.dumps({"data": {}}).encode("utf-8"))
+
+        with self.assertRaises(source_fetchers.SourceFetchError):
+            source_fetchers.fetch_shopify_orders(
+                shop_domain="shop.test",
+                access_token="token",
+                api_version="2025-10",
+                start_date="2026-07-11",
+                end_date="2026-07-11",
+                report_timezone="America/Los_Angeles",
+                transport=transport,
+            )
 
     def test_default_fetcher_registry_covers_all_core_sources(self) -> None:
         self.assertIsNotNone(source_fetchers)
@@ -103,10 +175,31 @@ class SourceFetcherTests(unittest.TestCase):
                 return SearchAnalytics()
 
         rows = source_fetchers._gsc_query_rows(
-            Service(), site_url="https://shop.test/", start_date="2026-07-12", end_date="2026-07-12", dimensions=["date"]
+            Service(),
+            site_url="https://shop.test/",
+            start_date="2026-07-12",
+            end_date="2026-07-12",
+            dimensions=["date"],
+            aggregation_type="byProperty",
         )
         self.assertEqual(calls[0]["dimensions"], ["date"])
+        self.assertEqual(calls[0]["type"], "web")
+        self.assertEqual(calls[0]["aggregationType"], "byProperty")
         self.assertEqual(rows[0]["clicks"], 5)
+
+    def test_gsc_dataset_uses_site_daily_totals_not_diagnostic_detail_sums(self) -> None:
+        self.assertIsNotNone(source_fetchers)
+        detail_rows = [{"date": "2026-08-22", "clicks": 6, "impressions": 4002}]
+        daily_rows = [{"date": "2026-08-22", "clicks": 44, "impressions": 4854}]
+        with patch.object(source_fetchers, "_gsc_rows", return_value=detail_rows), patch.object(
+            source_fetchers, "_gsc_daily_rows", return_value=daily_rows
+        ):
+            dataset = source_fetchers.fetch_gsc_dataset({}, "2026-08-22", "2026-08-22")
+        self.assertEqual(dataset.daily_metrics[0]["seo_clicks"], 44.0)
+        self.assertEqual(dataset.daily_metrics[0]["seo_impressions"], 4854.0)
+        self.assertEqual(dataset.raw_rows[0]["record_type"], "detail")
+        self.assertEqual(dataset.raw_rows[-1]["record_type"], "daily_total")
+        self.assertEqual(dataset.manifest_metadata["daily_aggregation_type"], "byProperty")
 
 
 if __name__ == "__main__":

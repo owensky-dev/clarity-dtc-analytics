@@ -83,11 +83,34 @@ class WarehouseTests(unittest.TestCase):
                 "shopify",
                 "2026-07-12T00:30:00Z",
                 [
-                    {"date": "2026-07-11", "orders": 0, "revenue": 0.0},
-                    {"date": "2026-07-12", "orders": 2, "revenue": 180.0},
+                    {
+                        "date": "2026-07-11",
+                        "orders": 0,
+                        "revenue": 0.0,
+                        "online_store_orders": 0,
+                        "online_store_revenue": 0.0,
+                        "offsite_orders": 0,
+                        "offsite_revenue": 0.0,
+                    },
+                    {
+                        "date": "2026-07-12",
+                        "orders": 2,
+                        "revenue": 180.0,
+                        "online_store_orders": 1,
+                        "online_store_revenue": 100.0,
+                        "offsite_orders": 1,
+                        "offsite_revenue": 80.0,
+                    },
                 ],
             )
             self.assertEqual(store.source_complete_dates("shopify"), {"2026-07-11", "2026-07-12"})
+
+    def test_warehouse_rejects_empty_daily_metrics(self) -> None:
+        self.assertIsNotNone(warehouse)
+        with tempfile.TemporaryDirectory() as directory:
+            store = warehouse.AnalyticsWarehouse(Path(directory))
+            with self.assertRaises(ValueError):
+                store.persist_source_daily_metrics("gsc", "2026-07-12T00:30:00Z", [])
 
 
 if __name__ == "__main__":
