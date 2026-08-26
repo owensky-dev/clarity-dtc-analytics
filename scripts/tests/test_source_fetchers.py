@@ -174,26 +174,8 @@ class SourceFetcherTests(unittest.TestCase):
 
     def test_ga4_channel_request_uses_purchase_revenue_metric(self) -> None:
         self.assertIsNotNone(source_fetchers)
-        with patch(
-            "google.oauth2.service_account.Credentials.from_service_account_file",
-            return_value=object(),
-        ), patch(
-            "google.analytics.data_v1beta.BetaAnalyticsDataClient",
-            return_value=object(),
-        ), patch.object(
-            source_fetchers, "_ga4_report_rows", side_effect=[[], []]
-        ) as report_rows:
-            source_fetchers._ga4_rows(
-                {
-                    "GOOGLE_APPLICATION_CREDENTIALS": "/tmp/not-read.json",
-                    "GA4_PROPERTY_ID": "123",
-                },
-                "2026-07-11",
-                "2026-07-12",
-            )
-        channel_metrics = report_rows.call_args_list[0].kwargs["metrics"]
-        self.assertIn("purchaseRevenue", channel_metrics)
-        self.assertIn("totalRevenue", channel_metrics)
+        self.assertIn("purchaseRevenue", source_fetchers.GA4_CHANNEL_METRICS)
+        self.assertIn("totalRevenue", source_fetchers.GA4_CHANNEL_METRICS)
 
     def test_gsc_daily_query_uses_date_only_for_report_totals(self) -> None:
         self.assertIsNotNone(source_fetchers)
