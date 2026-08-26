@@ -38,7 +38,11 @@ def _as_dates(values: Iterable[str | date]) -> set[date]:
     return {value if isinstance(value, date) else date.fromisoformat(value) for value in values}
 
 
-def latest_aligned_14_day_window(source_dates: dict[str, Iterable[str | date]]) -> AlignedWindow:
+def latest_aligned_14_day_window(
+    source_dates: dict[str, Iterable[str | date]],
+    *,
+    required_current_end: date | None = None,
+) -> AlignedWindow:
     """Find the latest contiguous 14-day period covered by all four core sources."""
     missing_sources = [source for source in REQUIRED_WEEKLY_SOURCES if source not in source_dates]
     if missing_sources:
@@ -48,6 +52,21 @@ def latest_aligned_14_day_window(source_dates: dict[str, Iterable[str | date]]) 
     }
     if any(not values for values in dates_by_source.values()):
         raise DataCoverageError("At least one weekly source has no complete dates.")
+
+    if required_current_end is not None:
+        all_days = {
+            required_current_end - timedelta(days=offset) for offset in range(14)
+        }
+        if not all(all_days.issubset(values) for values in dates_by_source.values()):
+            raise DataCoverageError(
+                "The required current 14-day window is not complete across GA4, Shopify, Google Ads, and GSC."
+            )
+        return AlignedWindow(
+            current_start=required_current_end - timedelta(days=6),
+            current_end=required_current_end,
+            previous_start=required_current_end - timedelta(days=13),
+            previous_end=required_current_end - timedelta(days=7),
+        )
 
     end = min(max(values) for values in dates_by_source.values())
     earliest = max(min(values) for values in dates_by_source.values())
@@ -104,7 +123,8 @@ def _period_summary(store: AnalyticsWarehouse, start: date, end: date) -> dict[s
     offsite_revenue = _sum(shopify, "offsite_revenue")
     sessions = _sum(ga4, "sessions")
     ga4_purchases = _sum(ga4, "ecommerce_purchases")
-    ga4_purchase_revenue = _sum(ga4, "ga4_revenue")
+    ga4_purchase_revenue = _sum(ga4, "ga4_purchase_revenue")
+    ga4_total_revenue = _sum(ga4, "ga4_total_revenue")
     add_to_cart = _sum(ga4, "add_to_cart")
     begin_checkout = _sum(ga4, "begin_checkout")
     ad_spend = _sum(ads, "ad_spend")
@@ -126,6 +146,7 @@ def _period_summary(store: AnalyticsWarehouse, start: date, end: date) -> dict[s
         "offsite_revenue": offsite_revenue,
         "ga4_purchases": ga4_purchases,
         "ga4_purchase_revenue": ga4_purchase_revenue,
+        "ga4_total_revenue": ga4_total_revenue,
         "purchase_count_gap": purchase_count_gap,
         "purchase_revenue_gap": online_store_revenue - ga4_purchase_revenue,
         "purchase_tracking_rate": ga4_purchases / online_store_orders if online_store_orders else (1.0 if ga4_purchases == 0 else 0.0),
@@ -136,7 +157,7 @@ def _period_summary(store: AnalyticsWarehouse, start: date, end: date) -> dict[s
         "add_to_cart_rate": add_to_cart / sessions if sessions else None,
         "checkout_rate": begin_checkout / sessions if sessions else None,
         "cart_to_checkout_rate": begin_checkout / add_to_cart if add_to_cart else None,
-        "conversion_rate": orders / sessions if sessions else None,
+        "conversion_rate": online_store_orders / sessions if sessions else None,
         "aov": revenue / orders if orders else None,
         "ad_spend": ad_spend,
         "ad_clicks": _sum(ads, "ad_clicks"),
@@ -172,7 +193,7 @@ def _markdown(payload: dict) -> str:
         "## 管理层摘要",
         purchase_health,
         f"- Shopify 收入：{current['revenue']:.2f}；订单：{current['orders']:.0f}。",
-        f"- GA4 Sessions：{current['sessions']:.0f}；全站转化率：{(current['conversion_rate'] or 0):.2%}。",
+        f"- GA4 Sessions：{current['sessions']:.0f}；Online Store 转化率：{(current['conversion_rate'] or 0):.2%}。",
         f"- Google Ads 花费：{current['ad_spend']:.2f}；CPA：{'n/a' if current['cpa'] is None else f'{current['cpa']:.2f}'}。",
         f"- GSC 点击：{current['seo_clicks']:.0f}；CTR：{(current['seo_ctr'] or 0):.2%}。",
         "- Clarity 行为证据需单独检查覆盖与截断风险；不将聚合行为数据表述为因果。",
@@ -183,7 +204,7 @@ def _markdown(payload: dict) -> str:
         f"| GA4 Sessions | {current['sessions']:.0f} | {previous['sessions']:.0f} | - | - |",
         f"| GA4 加购 | {current['add_to_cart']:.0f} | {previous['add_to_cart']:.0f} | {(current['add_to_cart_rate'] or 0):.2%} | {(previous['add_to_cart_rate'] or 0):.2%} |",
         f"| GA4 开始结账 | {current['begin_checkout']:.0f} | {previous['begin_checkout']:.0f} | {(current['cart_to_checkout_rate'] or 0):.2%} | {(previous['cart_to_checkout_rate'] or 0):.2%} |",
-        f"| Shopify 订单 | {current['orders']:.0f} | {previous['orders']:.0f} | {(current['conversion_rate'] or 0):.2%} | {(previous['conversion_rate'] or 0):.2%} |",
+        f"| Shopify Online Store 订单 | {current['online_store_orders']:.0f} | {previous['online_store_orders']:.0f} | {(current['conversion_rate'] or 0):.2%} | {(previous['conversion_rate'] or 0):.2%} |",
         "",
         "## 数据健康",
         "- 本报告仅在 GA4、Shopify、Google Ads、GSC 均覆盖当前与上周连续 14 天时生成。",
@@ -215,7 +236,7 @@ def _html_report(payload: dict) -> str:
             ("订单", f"{current['orders']:.0f}"),
             ("Online Store vs GA4 purchase", f"{current['online_store_orders']:.0f} vs {current['ga4_purchases']:.0f}"),
             ("GA4 Sessions", f"{current['sessions']:.0f}"),
-            ("全站转化率", f"{(current['conversion_rate'] or 0):.2%}"),
+            ("Online Store 转化率", f"{(current['conversion_rate'] or 0):.2%}"),
             ("Google Ads CPA", "n/a" if current["cpa"] is None else f"{current['cpa']:.2f}"),
         )
     )
@@ -225,7 +246,7 @@ def _html_report(payload: dict) -> str:
             ("GA4 Sessions", f"{current['sessions']:.0f}", f"{previous['sessions']:.0f}", "-", "-"),
             ("GA4 加购", f"{current['add_to_cart']:.0f}", f"{previous['add_to_cart']:.0f}", f"{(current['add_to_cart_rate'] or 0):.2%}", f"{(previous['add_to_cart_rate'] or 0):.2%}"),
             ("GA4 开始结账", f"{current['begin_checkout']:.0f}", f"{previous['begin_checkout']:.0f}", f"{(current['cart_to_checkout_rate'] or 0):.2%}", f"{(previous['cart_to_checkout_rate'] or 0):.2%}"),
-            ("Shopify 订单", f"{current['orders']:.0f}", f"{previous['orders']:.0f}", f"{(current['conversion_rate'] or 0):.2%}", f"{(previous['conversion_rate'] or 0):.2%}"),
+            ("Shopify Online Store 订单", f"{current['online_store_orders']:.0f}", f"{previous['online_store_orders']:.0f}", f"{(current['conversion_rate'] or 0):.2%}", f"{(previous['conversion_rate'] or 0):.2%}"),
         )
     )
     candidates = "".join(
@@ -283,10 +304,17 @@ def _cro_candidates(pages: list[dict]) -> list[dict]:
     return candidates
 
 
-def generate_weekly_report(store: AnalyticsWarehouse, output_dir: Path) -> WeeklyReportResult:
+def generate_weekly_report(
+    store: AnalyticsWarehouse,
+    output_dir: Path,
+    *,
+    expected_current_end: date | None = None,
+) -> WeeklyReportResult:
     """Generate Chinese HTML, Markdown, and JSON only after strict four-source coverage passes."""
     source_dates = {source: store.source_complete_dates(source) for source in REQUIRED_WEEKLY_SOURCES}
-    window = latest_aligned_14_day_window(source_dates)
+    window = latest_aligned_14_day_window(
+        source_dates, required_current_end=expected_current_end
+    )
     current = _period_summary(store, window.current_start, window.current_end)
     previous = _period_summary(store, window.previous_start, window.previous_end)
     friction = store.clarity_friction_summary(window.current_start.isoformat(), window.current_end.isoformat())

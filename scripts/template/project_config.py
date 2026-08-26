@@ -55,12 +55,17 @@ def load_project_settings(project_root: Path) -> dict[str, str]:
         retention_days = int(settings.get("RAW_RETENTION_DAYS", "400"))
         snapshot_hour = int(settings.get("CLARITY_SNAPSHOT_UTC_HOUR", "0"))
         snapshot_minute = int(settings.get("CLARITY_SNAPSHOT_UTC_MINUTE", "0"))
+        gsc_finalized_lag_days = int(settings.get("GSC_FINALIZED_LAG_DAYS", "3"))
     except ValueError as error:
-        raise ConfigError("RAW_RETENTION_DAYS and Clarity snapshot UTC time must be integers.") from error
+        raise ConfigError(
+            "RAW_RETENTION_DAYS, GSC_FINALIZED_LAG_DAYS, and Clarity snapshot UTC time must be integers."
+        ) from error
     if retention_days < 1:
         raise ConfigError("RAW_RETENTION_DAYS must be at least 1.")
     if not (0 <= snapshot_hour <= 23 and 0 <= snapshot_minute <= 59):
         raise ConfigError("Clarity snapshot UTC hour/minute are outside the valid clock range.")
+    if gsc_finalized_lag_days < 1:
+        raise ConfigError("GSC_FINALIZED_LAG_DAYS must be at least 1.")
     return settings
 
 

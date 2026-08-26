@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
+from zoneinfo import ZoneInfo
 
 from daily_collection import ClarityCollector, HttpResponse
 from daily_report import generate_daily_alert
@@ -14,7 +15,7 @@ from retention import cleanup_raw_snapshots
 
 
 CORE_SOURCES = ("ga4", "gsc", "google_ads", "shopify")
-LOOKBACK_DAYS = {"ga4": 4, "gsc": 4, "google_ads": 3, "shopify": 7}
+WEEKLY_WINDOW_DAYS = 14
 
 
 @dataclass(frozen=True)
@@ -22,6 +23,9 @@ class SourceDataset:
     dataset: str
     raw_rows: list[dict[str, Any]]
     daily_metrics: list[dict[str, Any]]
+    api_request_completed: bool
+    query_start_date: str
+    query_end_date: str
     manifest_metadata: dict[str, Any] | None = None
 
 
@@ -72,8 +76,12 @@ class DailyIngestionRunner:
         )
 
     def run(self, now: datetime | None = None) -> DailyRunOutcome:
-        now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).replace(microsecond=0)
+        now = now or datetime.now(timezone.utc)
+        if now.tzinfo is None:
+            raise ValueError("Daily ingestion now must be timezone-aware.")
+        now = now.astimezone(timezone.utc).replace(microsecond=0)
         run_id = now.isoformat().replace("+00:00", "Z")
+        report_now = now.astimezone(ZoneInfo(self.settings["REPORT_TIMEZONE"]))
         try:
             clarity = ClarityCollector(
                 self.project_root, self.settings, transport=self.clarity_transport
@@ -83,16 +91,31 @@ class DailyIngestionRunner:
             self._record_clarity_failure(run_id, error)
             clarity_successful_packs = 0
         source_status: dict[str, str] = {}
-        logical_end = now.date() - timedelta(days=1)
+        successful_query_windows: dict[str, tuple[date, date]] = {}
+        local_yesterday = report_now.date() - timedelta(days=1)
+        gsc_lag_days = int(self.settings.get("GSC_FINALIZED_LAG_DAYS", "3"))
+        if gsc_lag_days < 1:
+            raise ValueError("GSC_FINALIZED_LAG_DAYS must be at least 1.")
+        source_end_dates = {
+            source: (
+                report_now.date() - timedelta(days=gsc_lag_days)
+                if source == "gsc"
+                else local_yesterday
+            )
+            for source in CORE_SOURCES
+        }
+        common_complete_end = min(source_end_dates.values())
+        common_start = common_complete_end - timedelta(days=WEEKLY_WINDOW_DAYS - 1)
         for source in CORE_SOURCES:
             fetcher = self.source_fetchers.get(source)
             if not fetcher:
                 source_status[source] = "not_configured"
                 self._record_source_failure(source, run_id, RuntimeError("No source fetcher configured."))
                 continue
-            start = logical_end - timedelta(days=LOOKBACK_DAYS[source] - 1)
+            start = common_start
+            source_end = source_end_dates[source]
             try:
-                dataset = fetcher(self.settings, start.isoformat(), logical_end.isoformat())
+                dataset = fetcher(self.settings, start.isoformat(), source_end.isoformat())
                 manifest = persist_source_snapshot(
                     self.project_root,
                     self.warehouse,
@@ -102,14 +125,24 @@ class DailyIngestionRunner:
                     raw_rows=dataset.raw_rows,
                     daily_metrics=dataset.daily_metrics,
                     manifest_metadata=dataset.manifest_metadata,
+                    api_request_completed=dataset.api_request_completed,
+                    query_start_date=dataset.query_start_date,
+                    query_end_date=dataset.query_end_date,
                     expected_start_date=start.isoformat(),
-                    expected_end_date=logical_end.isoformat(),
+                    expected_end_date=source_end.isoformat(),
                 )
                 source_status[source] = manifest["status"]
+                if manifest["status"] in {"complete", "valid_zero"}:
+                    successful_query_windows[source] = (
+                        date.fromisoformat(dataset.query_start_date),
+                        date.fromisoformat(dataset.query_end_date),
+                    )
             except Exception as error:
                 source_status[source] = "failed"
                 self._record_source_failure(source, run_id, error)
-        generate_daily_alert(self.warehouse, self.project_root / "outputs", now.date().isoformat())
+        generate_daily_alert(
+            self.warehouse, self.project_root / "outputs", report_now.date().isoformat()
+        )
         cleanup_raw_snapshots(
             self.project_root,
             retention_days=int(self.settings.get("RAW_RETENTION_DAYS", "400")),
@@ -117,12 +150,25 @@ class DailyIngestionRunner:
         )
         weekly_report_path = None
         complete_statuses = {"complete", "valid_zero"}
-        if all(source_status.get(source) in complete_statuses for source in CORE_SOURCES):
+        report_window_start = common_complete_end - timedelta(days=WEEKLY_WINDOW_DAYS - 1)
+        report_window_is_current = all(
+            source in successful_query_windows
+            and successful_query_windows[source][0] <= report_window_start
+            and successful_query_windows[source][1] >= common_complete_end
+            for source in CORE_SOURCES
+        )
+        if report_window_is_current and all(
+            source_status.get(source) in complete_statuses for source in CORE_SOURCES
+        ):
             try:
                 from ai_narrative import write_optional_narrative
                 from reporting import generate_weekly_report
 
-                weekly = generate_weekly_report(self.warehouse, self.project_root / "outputs")
+                weekly = generate_weekly_report(
+                    self.warehouse,
+                    self.project_root / "outputs",
+                    expected_current_end=common_complete_end,
+                )
                 write_optional_narrative(
                     weekly.payload,
                     self.settings,

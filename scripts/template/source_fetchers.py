@@ -26,6 +26,15 @@ query Orders($first: Int!, $after: String, $query: String!) {
 }
 """
 
+GA4_CHANNEL_METRICS = [
+    "sessions",
+    "engagedSessions",
+    "conversions",
+    "ecommercePurchases",
+    "purchaseRevenue",
+    "totalRevenue",
+]
+
 
 class SourceFetchError(RuntimeError):
     pass
@@ -152,6 +161,9 @@ def _dataset(
     name: str,
     raw_rows: list[dict[str, Any]],
     daily_metrics: list[dict[str, Any]],
+    *,
+    start_date: str,
+    end_date: str,
     manifest_metadata: dict[str, Any] | None = None,
 ) -> Any:
     # Imported lazily to avoid a module cycle with the daily runner.
@@ -161,6 +173,9 @@ def _dataset(
         dataset=name,
         raw_rows=raw_rows,
         daily_metrics=daily_metrics,
+        api_request_completed=True,
+        query_start_date=start_date,
+        query_end_date=end_date,
         manifest_metadata=manifest_metadata,
     )
 
@@ -179,10 +194,20 @@ def fetch_shopify_dataset(settings: dict[str, str], start_date: str, end_date: s
         "orders",
         rows,
         shopify_daily_metrics(rows, start_date=start_date, end_date=end_date),
-        {
+        start_date=start_date,
+        end_date=end_date,
+        manifest_metadata={
             "report_timezone": settings["REPORT_TIMEZONE"],
             "business_order_filter": "paid_non_test_non_cancelled",
             "online_store_source_name": "web",
+            "daily_metric_fields": [
+                "orders",
+                "revenue",
+                "online_store_orders",
+                "online_store_revenue",
+                "offsite_orders",
+                "offsite_revenue",
+            ],
         },
     )
 
@@ -248,7 +273,7 @@ def _ga4_rows(
         client,
         property_id=settings["GA4_PROPERTY_ID"],
         dimensions=["date", "sessionDefaultChannelGroup"],
-        metrics=["sessions", "engagedSessions", "conversions", "ecommercePurchases", "totalRevenue"],
+        metrics=GA4_CHANNEL_METRICS,
         start_date=start_date,
         end_date=end_date,
     )
@@ -295,6 +320,22 @@ def fetch_ga4_dataset(settings: dict[str, str], start_date: str, end_date: str) 
             start_date=start_date,
             end_date=end_date,
         ),
+        start_date=start_date,
+        end_date=end_date,
+        manifest_metadata={
+            "daily_metric_fields": [
+                "sessions",
+                "engaged_sessions",
+                "conversions",
+                "ecommerce_purchases",
+                "ga4_purchase_revenue",
+                "ga4_total_revenue",
+                "add_to_cart",
+                "begin_checkout",
+            ],
+            "purchase_revenue_metric": "purchaseRevenue",
+            "business_revenue_metric": "totalRevenue",
+        },
     )
 
 
@@ -391,11 +432,14 @@ def fetch_gsc_dataset(settings: dict[str, str], start_date: str, end_date: str) 
         rollup_source_rows(
             "gsc", daily_rows, start_date=start_date, end_date=end_date
         ),
-        {
+        start_date=start_date,
+        end_date=end_date,
+        manifest_metadata={
             "search_type": "web",
             "daily_dimensions": ["date"],
             "daily_aggregation_type": "byProperty",
             "detail_dimensions": ["date", "page", "query", "country", "device"],
+            "daily_metric_fields": ["seo_clicks", "seo_impressions"],
         },
     )
 
@@ -459,6 +503,16 @@ def fetch_google_ads_dataset(settings: dict[str, str], start_date: str, end_date
         rollup_source_rows(
             "google_ads", rows, start_date=start_date, end_date=end_date
         ),
+        start_date=start_date,
+        end_date=end_date,
+        manifest_metadata={
+            "daily_metric_fields": [
+                "ad_clicks",
+                "ad_spend",
+                "ad_conversions",
+                "ad_conversion_value",
+            ]
+        },
     )
 
 

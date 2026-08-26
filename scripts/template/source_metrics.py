@@ -98,7 +98,8 @@ SOURCE_METRIC_MAP = {
         "engaged_sessions": "engagedSessions",
         "conversions": "conversions",
         "ecommerce_purchases": "ecommercePurchases",
-        "ga4_revenue": "totalRevenue",
+        "ga4_purchase_revenue": "purchaseRevenue",
+        "ga4_total_revenue": "totalRevenue",
     },
     "google_ads": {
         "ad_clicks": "clicks",

@@ -13,9 +13,9 @@ outputs/
 
 Raw source responses are immutable run evidence. Staged Parquet is a queryable export. DuckDB contains normalized long rows and report facts.
 
-Each four-source manifest records expected and actual date coverage, raw and daily schemas, plus source-specific contract metadata. Empty or incomplete requested-date daily rollups are `failed` and must not create warehouse coverage. Shopify order-level raw rows must satisfy the required schema and reconcile exactly to the six daily business/channel metrics before coverage is written. A complete all-zero source window remains `valid_zero`; in particular, zero Shopify qualified orders are valid because the complete date scaffold distinguishes zero sales from a missing fetch.
+Each four-source manifest records `api_request_completed`, the exact query window, expected and actual date coverage, raw and daily schemas, plus source-specific contract metadata. Missing completion proof, mismatched windows, and empty or incomplete requested-date daily rollups are `failed` and must not create warehouse coverage. Shopify order-level raw rows must satisfy the required schema and reconcile exactly to the six daily business/channel metrics before coverage is written. A proven complete all-zero source window remains `valid_zero`; in particular, zero Shopify qualified orders are valid because the complete date scaffold distinguishes zero sales from a missing fetch.
 
-GA4, GSC, and Google Ads APIs may legally omit dates whose additive metrics are all zero. Only after the API request succeeds, their source rollups must scaffold every requested date with zeros for the metrics declared in `SOURCE_METRIC_MAP`. Raw evidence remains unchanged. A failed request must never be converted into a zero scaffold.
+GA4, GSC, and Google Ads APIs may legally omit dates whose additive metrics are all zero. Only after the API request succeeds, their source rollups must scaffold every requested date with zeros for the metrics declared in `SOURCE_METRIC_MAP`. Raw evidence remains unchanged. GSC's request ends at local today minus `GSC_FINALIZED_LAG_DAYS` (default `3`), so unfinalized tail dates are neither queried nor padded. A failed request must never be converted into a zero scaffold.
 
 ## Clarity
 
@@ -32,19 +32,19 @@ The snapshot anchor is a configured fixed UTC clock time. Its manifest contains 
 ## Four-source facts
 
 - Shopify raw order facts include `financial_status`, `test`, `cancelled_at`, and `source_name`. Convert `created_at` to `REPORT_TIMEZONE`, then strictly keep only requested local dates. Shopify daily business facts count only paid, non-test, non-cancelled orders and persist `orders`, `revenue`, `online_store_orders`, `online_store_revenue`, `offsite_orders`, and `offsite_revenue`; a successfully fetched date with zero qualified orders is a valid complete row.
-- GA4 channel facts: `date`, sessions, engaged sessions, conversions, ecommerce purchases, and GA4 revenue.
+- GA4 channel facts: `date`, sessions, engaged sessions, conversions, ecommerce purchases, `purchaseRevenue` as `ga4_purchase_revenue`, and separately retained `totalRevenue` as `ga4_total_revenue`. Purchase reconciliation must never substitute total revenue.
 - GA4 funnel-event raw facts: `date`, sanitized `landingPagePlusQueryString`, `eventName`, and `eventCount`, limited to `add_to_cart` and `begin_checkout`. Remove the query string before local persistence so checkout tokens and tracking parameters are not stored. Daily warehouse facts add `add_to_cart` and `begin_checkout`; the successful channel query and its requested-date scaffold establish coverage, while event rows cannot extend coverage outside that window.
 - Google Ads: clicks, spend, conversions, conversion value. Convert micros to normal currency before staging.
 - GSC: clicks and impressions; calculate CTR only after aggregation. Use an explicit `type=web`, `aggregationType=byProperty`, `date`-only Search Console query for daily report facts. High-cardinality `date × page × query × country × device` rows are diagnostic raw data and must not be treated as complete totals.
 
-The weekly finance report requires every source to cover both comparison weeks. Automatic report generation also requires GA4, GSC, Google Ads, and Shopify to complete in the current ingestion run; a current failure cannot fall back to old warehouse coverage. Clarity coverage does not block the four-source finance report, but an unavailable or partial Clarity slice must disable associated CRO evidence.
+The weekly finance report requires every source to cover both comparison weeks. Automatic report generation also requires GA4, GSC, Google Ads, and Shopify to complete in the current ingestion run, and fixes the report end to the minimum current-run source end date. That exact 14-day window must fall inside every current query window; a current failure or missing window cannot fall back to old warehouse coverage. Clarity coverage does not block the four-source finance report, but an unavailable or partial Clarity slice must disable associated CRO evidence.
 
-Weekly funnel rates use the aligned report window: add-to-cart rate is `add_to_cart / sessions`, cart-to-checkout rate is `begin_checkout / add_to_cart`, and store conversion rate is Shopify orders divided by GA4 sessions.
+Weekly funnel rates use the aligned report window: add-to-cart rate is `add_to_cart / sessions`, cart-to-checkout rate is `begin_checkout / add_to_cart`, and Online Store conversion rate is qualified `source_name=web` Shopify orders divided by GA4 sessions. All-channel qualified orders and revenue remain separate business KPIs.
 
 Weekly purchase-integrity fields use the same aligned window:
 
 - `purchase_count_gap = Shopify Online Store orders - GA4 ecommerce purchases`
-- `purchase_revenue_gap = Shopify Online Store revenue - GA4 revenue`
+- `purchase_revenue_gap = Shopify Online Store revenue - GA4 purchaseRevenue`
 - `purchase_tracking_rate = GA4 ecommerce purchases / Shopify Online Store orders`
 
 A positive count gap is a high-risk signal, not transaction-level evidence. Exact reconciliation requires BigQuery `transaction_id` matched to Shopify Online Store paid, non-test, non-cancelled orders; no customer data belongs in the report output.

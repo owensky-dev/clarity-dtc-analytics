@@ -65,7 +65,8 @@ class WeeklyReportTests(unittest.TestCase):
                         "add_to_cart": 4.0 if index < 7 else 6.0,
                         "begin_checkout": 2.0 if index < 7 else 3.0,
                         "ecommerce_purchases": 1.0,
-                        "ga4_revenue": 100.0,
+                        "ga4_purchase_revenue": 100.0,
+                        "ga4_total_revenue": 150.0,
                     }
                     for index, value in enumerate(dates)
                 ],
@@ -133,7 +134,8 @@ class WeeklyReportTests(unittest.TestCase):
                         "date": value,
                         "sessions": 20.0,
                         "ecommerce_purchases": 0.0 if index == 13 else 1.0,
-                        "ga4_revenue": 0.0 if index == 13 else 100.0,
+                        "ga4_purchase_revenue": 0.0 if index == 13 else 100.0,
+                        "ga4_total_revenue": 1000.0,
                     }
                     for index, value in enumerate(dates)
                 ],
@@ -157,7 +159,10 @@ class WeeklyReportTests(unittest.TestCase):
             self.assertEqual(current["online_store_revenue"], 700.0)
             self.assertEqual(current["offsite_orders"], 1.0)
             self.assertEqual(current["offsite_revenue"], 40.0)
+            self.assertEqual(current["conversion_rate"], 0.05)
             self.assertEqual(current["ga4_purchases"], 6.0)
+            self.assertEqual(current["ga4_purchase_revenue"], 600.0)
+            self.assertEqual(current["ga4_total_revenue"], 7000.0)
             self.assertEqual(current["purchase_count_gap"], 1.0)
             self.assertEqual(current["purchase_revenue_gap"], 100.0)
             self.assertEqual(current["purchase_tracking_rate"], 6 / 7)
@@ -170,6 +175,7 @@ class WeeklyReportTests(unittest.TestCase):
             self.assertIn("BigQuery transaction_id", markdown)
             self.assertIn("本报告不自动补发", markdown)
             self.assertIn("Online Store vs GA4 purchase", html)
+            self.assertIn("Online Store 转化率", html)
 
     def test_weekly_report_adds_clarity_friction_as_behavior_evidence(self) -> None:
         self.assertIsNotNone(reporting)

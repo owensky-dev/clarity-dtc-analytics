@@ -44,6 +44,9 @@ class SourceSnapshotTests(unittest.TestCase):
                     }
                 ],
                 manifest_metadata={"business_order_filter": "paid_non_test_non_cancelled"},
+                api_request_completed=True,
+                query_start_date="2026-07-11",
+                query_end_date="2026-07-11",
             )
             self.assertEqual(manifest["status"], "valid_zero")
             self.assertEqual(manifest["date_range"], ["2026-07-11", "2026-07-11"])
@@ -51,6 +54,8 @@ class SourceSnapshotTests(unittest.TestCase):
             self.assertEqual(json.loads(raw_path.read_text(encoding="utf-8")), [])
             self.assertIn("online_store_orders", manifest["daily_metric_schema"])
             self.assertEqual(manifest["contract"]["business_order_filter"], "paid_non_test_non_cancelled")
+            self.assertTrue(manifest["api_request_completed"])
+            self.assertEqual(manifest["query_window"], ["2026-07-11", "2026-07-11"])
 
     def test_snapshot_writer_marks_empty_daily_metrics_failed_without_coverage(self) -> None:
         self.assertIsNotNone(source_snapshot)
@@ -86,6 +91,10 @@ class SourceSnapshotTests(unittest.TestCase):
                     {"date": "2026-07-10", "seo_clicks": 0, "seo_impressions": 0},
                     {"date": "2026-07-11", "seo_clicks": 0, "seo_impressions": 0},
                 ],
+                manifest_metadata={"daily_metric_fields": ["seo_clicks", "seo_impressions"]},
+                api_request_completed=True,
+                query_start_date="2026-07-10",
+                query_end_date="2026-07-11",
                 expected_start_date="2026-07-10",
                 expected_end_date="2026-07-11",
             )
@@ -112,11 +121,93 @@ class SourceSnapshotTests(unittest.TestCase):
                 dataset="search_analytics",
                 raw_rows=[{"date": "2026-07-11", "clicks": 1, "impressions": 10}],
                 daily_metrics=daily_metrics,
+                manifest_metadata={"daily_metric_fields": ["seo_clicks", "seo_impressions"]},
+                api_request_completed=True,
+                query_start_date="2026-07-10",
+                query_end_date="2026-07-11",
                 expected_start_date="2026-07-10",
                 expected_end_date="2026-07-11",
             )
             self.assertEqual(manifest["status"], "complete")
             self.assertEqual(store.source_complete_dates("gsc"), {"2026-07-10", "2026-07-11"})
+
+    def test_snapshot_writer_rejects_direct_zero_padding_without_api_completion_proof(self) -> None:
+        self.assertIsNotNone(source_snapshot)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            store = warehouse.AnalyticsWarehouse(root)
+            manifest = source_snapshot.persist_source_snapshot(
+                root,
+                store,
+                source="gsc",
+                run_id="2026-07-12T00:30:00Z",
+                dataset="search_analytics",
+                raw_rows=[],
+                daily_metrics=[
+                    {"date": "2026-07-10", "seo_clicks": 0, "seo_impressions": 0},
+                    {"date": "2026-07-11", "seo_clicks": 0, "seo_impressions": 0},
+                ],
+                query_start_date="2026-07-10",
+                query_end_date="2026-07-11",
+                expected_start_date="2026-07-10",
+                expected_end_date="2026-07-11",
+            )
+            self.assertEqual(manifest["status"], "failed")
+            self.assertEqual(manifest["failure_reason"], "missing_api_completion_proof")
+            self.assertEqual(store.source_complete_dates("gsc"), set())
+
+    def test_snapshot_writer_rejects_completion_proof_without_source_contract(self) -> None:
+        self.assertIsNotNone(source_snapshot)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            store = warehouse.AnalyticsWarehouse(root)
+            manifest = source_snapshot.persist_source_snapshot(
+                root,
+                store,
+                source="gsc",
+                run_id="2026-07-12T00:30:00Z",
+                dataset="search_analytics",
+                raw_rows=[],
+                daily_metrics=[
+                    {"date": "2026-07-11", "seo_clicks": 0, "seo_impressions": 0}
+                ],
+                api_request_completed=True,
+                query_start_date="2026-07-11",
+                query_end_date="2026-07-11",
+                expected_start_date="2026-07-11",
+                expected_end_date="2026-07-11",
+            )
+            self.assertEqual(manifest["status"], "failed")
+            self.assertEqual(manifest["failure_reason"], "missing_source_contract")
+            self.assertEqual(store.source_complete_dates("gsc"), set())
+
+    def test_snapshot_writer_rejects_completion_proof_for_a_different_query_window(self) -> None:
+        self.assertIsNotNone(source_snapshot)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            store = warehouse.AnalyticsWarehouse(root)
+            manifest = source_snapshot.persist_source_snapshot(
+                root,
+                store,
+                source="gsc",
+                run_id="2026-07-12T00:30:00Z",
+                dataset="search_analytics",
+                raw_rows=[],
+                daily_metrics=[
+                    {"date": "2026-07-11", "seo_clicks": 0, "seo_impressions": 0}
+                ],
+                manifest_metadata={
+                    "daily_metric_fields": ["seo_clicks", "seo_impressions"]
+                },
+                api_request_completed=True,
+                query_start_date="2026-07-10",
+                query_end_date="2026-07-11",
+                expected_start_date="2026-07-11",
+                expected_end_date="2026-07-11",
+            )
+            self.assertEqual(manifest["status"], "failed")
+            self.assertEqual(manifest["failure_reason"], "query_window_mismatch")
+            self.assertEqual(store.source_complete_dates("gsc"), set())
 
     def test_snapshot_writer_fails_closed_on_incomplete_requested_date_coverage(self) -> None:
         self.assertIsNotNone(source_snapshot)

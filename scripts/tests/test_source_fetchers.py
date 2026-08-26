@@ -142,7 +142,16 @@ class SourceFetcherTests(unittest.TestCase):
 
     def test_ga4_dataset_keeps_channel_and_dated_funnel_rows_separate(self) -> None:
         self.assertIsNotNone(source_fetchers)
-        channel_rows = [{"date": "20260712", "sessionDefaultChannelGroup": "Organic Search", "sessions": 20}]
+        channel_rows = [
+            {
+                "date": "20260712",
+                "sessionDefaultChannelGroup": "Organic Search",
+                "sessions": 20,
+                "ecommercePurchases": 1,
+                "purchaseRevenue": 80,
+                "totalRevenue": 140,
+            }
+        ]
         event_rows = [
             {"date": "20260712", "landingPagePlusQueryString": "/p?access_token=secret", "eventName": "add_to_cart", "eventCount": 4},
             {"date": "20260712", "landingPagePlusQueryString": "/p", "eventName": "begin_checkout", "eventCount": 2},
@@ -154,8 +163,37 @@ class SourceFetcherTests(unittest.TestCase):
         self.assertEqual(dataset.raw_rows[-1]["record_type"], "funnel_event")
         self.assertEqual(dataset.raw_rows[1]["landingPagePlusQueryString"], "/p")
         self.assertEqual(dataset.daily_metrics[0]["sessions"], 20.0)
+        self.assertEqual(dataset.daily_metrics[0]["ga4_purchase_revenue"], 80.0)
+        self.assertEqual(dataset.daily_metrics[0]["ga4_total_revenue"], 140.0)
         self.assertEqual(dataset.daily_metrics[0]["add_to_cart"], 4.0)
         self.assertEqual(dataset.daily_metrics[0]["begin_checkout"], 2.0)
+        self.assertTrue(dataset.api_request_completed)
+        self.assertEqual(dataset.query_start_date, "2026-07-12")
+        self.assertEqual(dataset.query_end_date, "2026-07-12")
+        self.assertEqual(dataset.manifest_metadata["purchase_revenue_metric"], "purchaseRevenue")
+
+    def test_ga4_channel_request_uses_purchase_revenue_metric(self) -> None:
+        self.assertIsNotNone(source_fetchers)
+        with patch(
+            "google.oauth2.service_account.Credentials.from_service_account_file",
+            return_value=object(),
+        ), patch(
+            "google.analytics.data_v1beta.BetaAnalyticsDataClient",
+            return_value=object(),
+        ), patch.object(
+            source_fetchers, "_ga4_report_rows", side_effect=[[], []]
+        ) as report_rows:
+            source_fetchers._ga4_rows(
+                {
+                    "GOOGLE_APPLICATION_CREDENTIALS": "/tmp/not-read.json",
+                    "GA4_PROPERTY_ID": "123",
+                },
+                "2026-07-11",
+                "2026-07-12",
+            )
+        channel_metrics = report_rows.call_args_list[0].kwargs["metrics"]
+        self.assertIn("purchaseRevenue", channel_metrics)
+        self.assertIn("totalRevenue", channel_metrics)
 
     def test_gsc_daily_query_uses_date_only_for_report_totals(self) -> None:
         self.assertIsNotNone(source_fetchers)
@@ -200,6 +238,9 @@ class SourceFetcherTests(unittest.TestCase):
         self.assertEqual(dataset.raw_rows[0]["record_type"], "detail")
         self.assertEqual(dataset.raw_rows[-1]["record_type"], "daily_total")
         self.assertEqual(dataset.manifest_metadata["daily_aggregation_type"], "byProperty")
+        self.assertTrue(dataset.api_request_completed)
+        self.assertEqual(dataset.query_start_date, "2026-08-22")
+        self.assertEqual(dataset.query_end_date, "2026-08-22")
 
     def test_gsc_dataset_scaffolds_day_omitted_by_successful_api_response(self) -> None:
         self.assertIsNotNone(source_fetchers)

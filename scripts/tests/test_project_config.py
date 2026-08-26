@@ -37,6 +37,18 @@ class ProjectConfigTests(unittest.TestCase):
                 project_config.load_project_settings(root)
             self.assertIn("snapshot UTC", str(context.exception))
 
+    def test_project_settings_reject_nonpositive_gsc_finalized_lag(self) -> None:
+        self.assertIsNotNone(project_config)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".env").write_text(
+                "REPORT_TIMEZONE=UTC\nSTORE_CURRENCY=USD\nGSC_FINALIZED_LAG_DAYS=0\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(project_config.ConfigError) as context:
+                project_config.load_project_settings(root)
+            self.assertIn("GSC_FINALIZED_LAG_DAYS", str(context.exception))
+
 
 if __name__ == "__main__":
     unittest.main()

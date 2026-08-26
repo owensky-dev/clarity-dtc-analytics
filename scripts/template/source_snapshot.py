@@ -56,6 +56,9 @@ def persist_source_snapshot(
     raw_rows: list[dict[str, Any]],
     daily_metrics: list[dict[str, Any]],
     manifest_metadata: dict[str, Any] | None = None,
+    api_request_completed: bool = False,
+    query_start_date: str | None = None,
+    query_end_date: str | None = None,
     expected_start_date: str | None = None,
     expected_end_date: str | None = None,
 ) -> dict[str, Any]:
@@ -99,6 +102,22 @@ def persist_source_snapshot(
     else:
         status = "complete"
         failure_reason = None
+    if status == "complete" and api_request_completed is not True:
+        status = "failed"
+        failure_reason = "missing_api_completion_proof"
+    elif status == "complete" and (query_start_date is None or query_end_date is None):
+        status = "failed"
+        failure_reason = "missing_query_window"
+    elif status == "complete" and not manifest_metadata:
+        status = "failed"
+        failure_reason = "missing_source_contract"
+    elif (
+        status == "complete"
+        and expected_dates is not None
+        and (query_start_date != expected_start_date or query_end_date != expected_end_date)
+    ):
+        status = "failed"
+        failure_reason = "query_window_mismatch"
     if status == "complete" and all(
         all(float(value or 0) == 0 for key, value in row.items() if key != "date")
         for row in daily_metrics
@@ -114,6 +133,12 @@ def persist_source_snapshot(
         "date_range": [dates[0], dates[-1]] if dates else [],
         "expected_date_range": (
             [expected_start_date, expected_end_date] if expected_dates is not None else []
+        ),
+        "api_request_completed": api_request_completed,
+        "query_window": (
+            [query_start_date, query_end_date]
+            if query_start_date is not None and query_end_date is not None
+            else []
         ),
         "raw_schema": sorted({key for row in raw_rows for key in row}),
         "daily_metric_schema": sorted({key for row in daily_metrics for key in row}),
