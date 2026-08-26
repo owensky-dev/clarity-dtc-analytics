@@ -22,6 +22,7 @@ Use `.env` only in an initialized store project. Keep values local.
 
 - `RAW_RETENTION_DAYS`: default `400`.
 - `CLARITY_SNAPSHOT_UTC_HOUR` and `CLARITY_SNAPSHOT_UTC_MINUTE`: fixed UTC end time for the 24-hour Clarity snapshot; defaults to `00:00`. The manifest's UTC bounds, not a date label, define the evidence window.
+- `GSC_FINALIZED_LAG_DAYS`: finalized Search Console lag in store calendar days; defaults to `3`. GSC queries stop at local today minus this value, and the automatic weekly report uses the minimum current-run source end date.
 - `LLM_MODE`: `off` or `openai`.
 - `OPENAI_API_KEY`, `OPENAI_MODEL`: only for optional narrative generation.
 - `LOG_LEVEL`: default `INFO`.

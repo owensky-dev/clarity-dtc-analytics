@@ -198,6 +198,8 @@ class AnalyticsWarehouse:
     ) -> None:
         if status not in {"complete", "valid_zero"}:
             raise ValueError(f"Unsupported source metric status: {status}")
+        if not rows:
+            raise ValueError("Source daily metrics cannot be empty.")
         normalized: list[tuple[str, str, str, str, str]] = []
         for row in rows:
             date_value = str(row.get("date", ""))

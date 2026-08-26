@@ -13,8 +13,11 @@
 - 以 Shopify 作为营收和订单事实来源；把 Clarity 作为行为证据层，不将聚合行为数据表述为因果
 - 输出 HTML、Markdown、JSON 和供可选 AI 叙事使用的结构化分析上下文
 - 在 HTML 与 Markdown 顶部清晰标注“周报周期”和“对比周期”
-- 周报按本周与上周展示 Sessions → 加购 → 开始结账 → Shopify 订单漏斗
-- 对比 Shopify 订单/收入与 GA4 purchase/收入，发现漏记风险时要求用 BigQuery `transaction_id` 逐单核验；本 Skill 只报告、不补发事件
+- 周报按本周与上周展示 Sessions → 加购 → 开始结账 → Shopify Online Store 订单漏斗，并保留全渠道合格订单/收入经营 KPI
+- Shopify 经营总量仅计 paid、非测试、未取消订单；GA4 purchase 完整性只与 Online Store 网页订单对账，Shop/POS/app 等站外订单单列
+- GA4 收入对账使用 `purchaseRevenue`，并把 `totalRevenue` 作为不同指标单独保留
+- GSC 周报总量使用 Web、`byProperty`、仅日期粒度的站点查询，多维 query/page 明细只作诊断
+- 发现 GA4 漏记风险时要求用 BigQuery `transaction_id` 逐单核验；本 Skill 只报告、不补发事件
 
 ## 使用方式
 
@@ -47,6 +50,7 @@ python scripts/generate_weekly_report.py --project-root .
 
 - 不提交 `.env`、OAuth Token、Shopify Access Token 或任何原始凭据。
 - 周报只有在 GA4、Shopify、Google Ads、GSC 对当前周和对比周都存在完整日级覆盖时才生成。
+- 每日自动周报要求本次四源都有 API 完成证明、查询窗口和完整日级覆盖；GSC 默认只到店铺当地 T-3，其余来源到 T-1，周报固定锚定共同完整日且不会向后搜索旧周期。缺证据、缺日或来源失败时保留已采集证据，不沿用旧 warehouse 重新出报；有成功证明的完整全零窗口仍记为 `valid_zero`。
 - Clarity 的 UTC 滚动 24 小时快照与店铺自然日口径分开处理；它用于提出可验证的 CRO 假设，而不是直接声称因果。
 
 ## 目录说明

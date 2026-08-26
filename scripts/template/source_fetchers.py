@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from typing import Any, Callable
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
@@ -16,6 +16,7 @@ query Orders($first: Int!, $after: String, $query: String!) {
     edges {
       node {
         id name createdAt displayFinancialStatus displayFulfillmentStatus sourceName landingPageUrl referrerUrl
+        test cancelledAt
         currentSubtotalPriceSet { shopMoney { amount currencyCode } }
         currentTotalPriceSet { shopMoney { amount currencyCode } }
         currentTotalTaxSet { shopMoney { amount currencyCode } }
@@ -24,6 +25,15 @@ query Orders($first: Int!, $after: String, $query: String!) {
   }
 }
 """
+
+GA4_CHANNEL_METRICS = [
+    "sessions",
+    "engagedSessions",
+    "conversions",
+    "ecommercePurchases",
+    "purchaseRevenue",
+    "totalRevenue",
+]
 
 
 class SourceFetchError(RuntimeError):
@@ -59,6 +69,8 @@ def shopify_order_record(node: dict[str, Any], *, report_timezone: str) -> dict[
         "total_tax": _money(node, "currentTotalTaxSet"),
         "financial_status": node.get("displayFinancialStatus", ""),
         "fulfillment_status": node.get("displayFulfillmentStatus", ""),
+        "test": bool(node.get("test", False)),
+        "cancelled_at": node.get("cancelledAt") or "",
         "source_name": node.get("sourceName", ""),
         "landing_site": node.get("landingPageUrl", ""),
         "referring_site": node.get("referrerUrl", ""),
@@ -97,10 +109,16 @@ def fetch_shopify_orders(
     """Fetch Shopify orders and convert their dates in the configured report timezone."""
     transport = transport or _shopify_transport
     headers = {"X-Shopify-Access-Token": access_token, "Content-Type": "application/json"}
+    requested_start = date.fromisoformat(start_date)
+    requested_end = date.fromisoformat(end_date)
+    if requested_start > requested_end:
+        raise SourceFetchError("Shopify start_date must not be after end_date")
+    query_start = (requested_start - timedelta(days=2)).isoformat()
+    query_end = (requested_end + timedelta(days=2)).isoformat()
     variables: dict[str, Any] = {
         "first": 100,
         "after": None,
-        "query": f"created_at:>={start_date} created_at:<={end_date}",
+        "query": f"created_at:>={query_start} created_at:<={query_end}",
     }
     rows: list[dict[str, Any]] = []
     while True:
@@ -117,10 +135,15 @@ def fetch_shopify_orders(
             raise SourceFetchError("Shopify GraphQL returned invalid JSON") from error
         if payload.get("errors"):
             raise SourceFetchError(f"Shopify GraphQL errors: {payload['errors']}")
-        orders = payload.get("data", {}).get("orders", {})
+        data = payload.get("data")
+        orders = data.get("orders") if isinstance(data, dict) else None
+        if not isinstance(orders, dict) or not isinstance(orders.get("edges"), list) or not isinstance(orders.get("pageInfo"), dict):
+            raise SourceFetchError("Shopify GraphQL response is missing the orders connection")
         for edge in orders.get("edges", []):
             node = edge.get("node", {})
-            rows.append(shopify_order_record(node, report_timezone=report_timezone))
+            record = shopify_order_record(node, report_timezone=report_timezone)
+            if start_date <= record["date"] <= end_date:
+                rows.append(record)
         page_info = orders.get("pageInfo", {})
         if not page_info.get("hasNextPage"):
             break
@@ -134,11 +157,27 @@ def _require(settings: dict[str, str], *keys: str) -> None:
         raise SourceFetchError(f"Missing required source configuration: {', '.join(missing)}")
 
 
-def _dataset(name: str, raw_rows: list[dict[str, Any]], daily_metrics: list[dict[str, Any]]) -> Any:
+def _dataset(
+    name: str,
+    raw_rows: list[dict[str, Any]],
+    daily_metrics: list[dict[str, Any]],
+    *,
+    start_date: str,
+    end_date: str,
+    manifest_metadata: dict[str, Any] | None = None,
+) -> Any:
     # Imported lazily to avoid a module cycle with the daily runner.
     from daily_runner import SourceDataset
 
-    return SourceDataset(dataset=name, raw_rows=raw_rows, daily_metrics=daily_metrics)
+    return SourceDataset(
+        dataset=name,
+        raw_rows=raw_rows,
+        daily_metrics=daily_metrics,
+        api_request_completed=True,
+        query_start_date=start_date,
+        query_end_date=end_date,
+        manifest_metadata=manifest_metadata,
+    )
 
 
 def fetch_shopify_dataset(settings: dict[str, str], start_date: str, end_date: str) -> Any:
@@ -151,7 +190,26 @@ def fetch_shopify_dataset(settings: dict[str, str], start_date: str, end_date: s
         end_date=end_date,
         report_timezone=settings["REPORT_TIMEZONE"],
     )
-    return _dataset("orders", rows, shopify_daily_metrics(rows, start_date=start_date, end_date=end_date))
+    return _dataset(
+        "orders",
+        rows,
+        shopify_daily_metrics(rows, start_date=start_date, end_date=end_date),
+        start_date=start_date,
+        end_date=end_date,
+        manifest_metadata={
+            "report_timezone": settings["REPORT_TIMEZONE"],
+            "business_order_filter": "paid_non_test_non_cancelled",
+            "online_store_source_name": "web",
+            "daily_metric_fields": [
+                "orders",
+                "revenue",
+                "online_store_orders",
+                "online_store_revenue",
+                "offsite_orders",
+                "offsite_revenue",
+            ],
+        },
+    )
 
 
 def _ga4_report_rows(
@@ -215,7 +273,7 @@ def _ga4_rows(
         client,
         property_id=settings["GA4_PROPERTY_ID"],
         dimensions=["date", "sessionDefaultChannelGroup"],
-        metrics=["sessions", "engagedSessions", "conversions", "ecommercePurchases", "totalRevenue"],
+        metrics=GA4_CHANNEL_METRICS,
         start_date=start_date,
         end_date=end_date,
     )
@@ -256,21 +314,55 @@ def fetch_ga4_dataset(settings: dict[str, str], start_date: str, end_date: str) 
     return _dataset(
         "channel_and_funnel",
         raw_rows,
-        rollup_ga4_rows(channel_rows, event_rows),
+        rollup_ga4_rows(
+            channel_rows,
+            event_rows,
+            start_date=start_date,
+            end_date=end_date,
+        ),
+        start_date=start_date,
+        end_date=end_date,
+        manifest_metadata={
+            "daily_metric_fields": [
+                "sessions",
+                "engaged_sessions",
+                "conversions",
+                "ecommerce_purchases",
+                "ga4_purchase_revenue",
+                "ga4_total_revenue",
+                "add_to_cart",
+                "begin_checkout",
+            ],
+            "purchase_revenue_metric": "purchaseRevenue",
+            "business_revenue_metric": "totalRevenue",
+        },
     )
 
 
 def _gsc_query_rows(
-    service: Any, *, site_url: str, start_date: str, end_date: str, dimensions: list[str]
+    service: Any,
+    *,
+    site_url: str,
+    start_date: str,
+    end_date: str,
+    dimensions: list[str],
+    aggregation_type: str | None = None,
 ) -> list[dict[str, Any]]:
     """Fetch a complete paged GSC result for diagnostic dimensions."""
     rows: list[dict[str, Any]] = []
     start_row = 0
     while True:
-        result = service.searchanalytics().query(
-            siteUrl=site_url,
-            body={"startDate": start_date, "endDate": end_date, "dimensions": dimensions, "rowLimit": 25000, "startRow": start_row},
-        ).execute()
+        body = {
+            "startDate": start_date,
+            "endDate": end_date,
+            "dimensions": dimensions,
+            "type": "web",
+            "rowLimit": 25000,
+            "startRow": start_row,
+        }
+        if aggregation_type:
+            body["aggregationType"] = aggregation_type
+        result = service.searchanalytics().query(siteUrl=site_url, body=body).execute()
         batch = result.get("rows", [])
         if not batch:
             break
@@ -324,6 +416,7 @@ def _gsc_daily_rows(settings: dict[str, str], start_date: str, end_date: str) ->
         start_date=start_date,
         end_date=end_date,
         dimensions=["date"],
+        aggregation_type="byProperty",
     )
 
 
@@ -333,7 +426,22 @@ def fetch_gsc_dataset(settings: dict[str, str], start_date: str, end_date: str) 
     raw_rows = [{"record_type": "detail", **row} for row in detail_rows] + [
         {"record_type": "daily_total", **row} for row in daily_rows
     ]
-    return _dataset("search_analytics", raw_rows, rollup_source_rows("gsc", daily_rows))
+    return _dataset(
+        "search_analytics",
+        raw_rows,
+        rollup_source_rows(
+            "gsc", daily_rows, start_date=start_date, end_date=end_date
+        ),
+        start_date=start_date,
+        end_date=end_date,
+        manifest_metadata={
+            "search_type": "web",
+            "daily_dimensions": ["date"],
+            "daily_aggregation_type": "byProperty",
+            "detail_dimensions": ["date", "page", "query", "country", "device"],
+            "daily_metric_fields": ["seo_clicks", "seo_impressions"],
+        },
+    )
 
 
 def _ads_rows(settings: dict[str, str], start_date: str, end_date: str) -> list[dict[str, Any]]:
@@ -389,7 +497,23 @@ def _ads_rows(settings: dict[str, str], start_date: str, end_date: str) -> list[
 
 def fetch_google_ads_dataset(settings: dict[str, str], start_date: str, end_date: str) -> Any:
     rows = _ads_rows(settings, start_date, end_date)
-    return _dataset("ad_group_performance", rows, rollup_source_rows("google_ads", rows))
+    return _dataset(
+        "ad_group_performance",
+        rows,
+        rollup_source_rows(
+            "google_ads", rows, start_date=start_date, end_date=end_date
+        ),
+        start_date=start_date,
+        end_date=end_date,
+        manifest_metadata={
+            "daily_metric_fields": [
+                "ad_clicks",
+                "ad_spend",
+                "ad_conversions",
+                "ad_conversion_value",
+            ]
+        },
+    )
 
 
 def default_source_fetchers() -> dict[str, Callable[[dict[str, str], str, str], Any]]:

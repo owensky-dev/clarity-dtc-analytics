@@ -36,6 +36,10 @@ The run must:
 - Keep Clarity windows as UTC rolling 24-hour snapshots. Do not relabel them as exact store-calendar days.
 - Anchor each Clarity window to `CLARITY_SNAPSHOT_UTC_HOUR/MINUTE` (default `00:00`) so a rerun is idempotent; use manifest bounds as the actual evidence window.
 - Continue available source collection when another source fails, but record the failed source explicitly.
+- Treat an empty or incomplete requested-date daily rollup as a failed source snapshot. Preserve raw evidence and the failed manifest, but do not write complete warehouse coverage; a complete all-zero window remains `valid_zero`.
+- Require explicit `api_request_completed=true`, the exact query window, and source contract metadata from each bundled fetcher. A raw-empty padded window without this proof is failed evidence.
+- After a successful GA4, finalized GSC, or Google Ads API response, scaffold API-omitted dates with zeros only for that source's declared additive daily metrics. Never use zero scaffolding to mask a request failure or unfinalized GSC tail dates.
+- Derive natural-day windows in `REPORT_TIMEZONE`. GSC ends at local today minus `GSC_FINALIZED_LAG_DAYS` (default `3`); other core sources end at local yesterday. Anchor the automatic 14-day weekly comparison to the minimum current-run source end and require that exact window in every source; never search backward to an old report window.
 
 Read [data-contract.md](references/data-contract.md) before changing schemas or query packs.
 
@@ -47,9 +51,11 @@ The weekly report must use the latest consecutive 14 dates covered by GA4, Shopi
 
 At the top of both HTML and Markdown outputs, show `周报周期` for the current 7-day window and `对比周期` for the prior 7-day window. The period labels must come from the aligned report window.
 
-The core funnel must compare current versus previous GA4 Sessions, `add_to_cart`, `begin_checkout`, and Shopify orders. Show add-to-cart rate, cart-to-checkout rate, and store conversion rate as percentages.
+The core funnel must compare current versus previous GA4 Sessions, `add_to_cart`, `begin_checkout`, and Shopify Online Store orders. Keep all paid, non-test, non-cancelled Shopify orders/revenue as separate business KPIs. Show add-to-cart rate, cart-to-checkout rate, and Online Store conversion rate as percentages; its numerator is qualified `source_name=web` orders.
 
-Compare Shopify orders/revenue with GA4 ecommerce purchases/revenue for both weeks. Treat a positive Shopify-minus-GA4 order gap as a high-risk tracking signal. The aggregate comparison does not prove which transactions are missing: require BigQuery `transaction_id` against Shopify paid, non-test orders for order-level reconciliation. This skill is read-only and must never send Measurement Protocol events; hand confirmed recovery work to `$ga4-data-analysis`.
+For GSC, use an explicit Web, `byProperty`, date-only query for daily clicks and impressions; keep `date × page × query × country × device` rows as diagnostic raw data only.
+
+Keep all qualified Shopify orders in business totals, but compare GA4 ecommerce purchases and GA4 `purchaseRevenue` only with `source_name=web` Online Store orders/revenue. Keep GA4 `totalRevenue` separate; never present it as purchase revenue. Report Shop/POS/app and other offsite orders separately. Treat a positive Online-Store-minus-GA4 order gap as a high-risk tracking signal. The aggregate comparison does not prove which transactions are missing: require BigQuery `transaction_id` against Shopify Online Store paid, non-test, non-cancelled orders for order-level reconciliation. This skill is read-only and must never send Measurement Protocol events; hand confirmed recovery work to `$ga4-data-analysis`.
 
 Treat Clarity as a separate evidence layer. Include observed facts, cautious inferences, reproducible Clarity filters, and validation actions; never claim causal behavior from aggregate metrics or recordings. Read [reporting-policy.md](references/reporting-policy.md) for metric and narrative rules.
 

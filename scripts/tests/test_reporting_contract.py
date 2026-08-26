@@ -40,6 +40,15 @@ class ReportingContractTests(unittest.TestCase):
         self.assertEqual(window.previous_start, date(2026, 6, 29))
         self.assertEqual(window.previous_end, date(2026, 7, 5))
 
+    def test_required_current_window_does_not_fall_back_to_old_coverage(self) -> None:
+        self.assertIsNotNone(reporting)
+        old_dates = dates_between(date(2026, 6, 1), date(2026, 6, 14))
+        with self.assertRaises(reporting.DataCoverageError):
+            reporting.latest_aligned_14_day_window(
+                {source: old_dates for source in reporting.REQUIRED_WEEKLY_SOURCES},
+                required_current_end=date(2026, 7, 12),
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

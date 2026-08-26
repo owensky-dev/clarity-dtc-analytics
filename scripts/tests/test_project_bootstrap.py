@@ -25,6 +25,10 @@ class ProjectBootstrapTests(unittest.TestCase):
             target = Path(directory) / "demo-store"
             init_project.install_project(target)
             self.assertTrue((target / ".env.example").is_file())
+            self.assertIn(
+                "GSC_FINALIZED_LAG_DAYS=3",
+                (target / ".env.example").read_text(encoding="utf-8"),
+            )
             self.assertIn(".env", (target / ".gitignore").read_text(encoding="utf-8"))
             self.assertFalse((target / ".env").exists())
             self.assertTrue((target / "data" / "raw").is_dir())
