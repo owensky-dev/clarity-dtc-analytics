@@ -113,12 +113,25 @@ SOURCE_METRIC_MAP = {
 }
 
 
-def rollup_source_rows(source: str, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Aggregate API rows by source date without conflating source metric meanings."""
+def rollup_source_rows(
+    source: str,
+    rows: list[dict[str, Any]],
+    *,
+    start_date: str,
+    end_date: str,
+) -> list[dict[str, Any]]:
+    """Aggregate additive API metrics and scaffold successful omitted zero dates."""
     if source not in SOURCE_METRIC_MAP:
         raise ValueError(f"Unsupported source rollup: {source}")
     mapping = SOURCE_METRIC_MAP[source]
-    grouped: dict[str, dict[str, float]] = {}
+    start = date.fromisoformat(start_date)
+    end = date.fromisoformat(end_date)
+    if start > end:
+        raise ValueError("Source rollup start_date must not be after end_date")
+    grouped: dict[str, dict[str, float]] = {
+        (start + timedelta(days=offset)).isoformat(): {target: 0.0 for target in mapping}
+        for offset in range((end - start).days + 1)
+    }
     for row in rows:
         date_value = _iso_date(row.get("date", ""))
         if not date_value:
@@ -130,10 +143,16 @@ def rollup_source_rows(source: str, rows: list[dict[str, Any]]) -> list[dict[str
 
 
 def rollup_ga4_rows(
-    channel_rows: list[dict[str, Any]], event_rows: list[dict[str, Any]]
+    channel_rows: list[dict[str, Any]],
+    event_rows: list[dict[str, Any]],
+    *,
+    start_date: str,
+    end_date: str,
 ) -> list[dict[str, Any]]:
     """Merge dated GA4 funnel events into channel-derived daily coverage."""
-    daily = rollup_source_rows("ga4", channel_rows)
+    daily = rollup_source_rows(
+        "ga4", channel_rows, start_date=start_date, end_date=end_date
+    )
     by_date = {row["date"]: row for row in daily}
     for row in daily:
         row["add_to_cart"] = 0.0

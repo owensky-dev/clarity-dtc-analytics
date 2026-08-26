@@ -15,6 +15,8 @@ Raw source responses are immutable run evidence. Staged Parquet is a queryable e
 
 Each four-source manifest records expected and actual date coverage, raw and daily schemas, plus source-specific contract metadata. Empty or incomplete requested-date daily rollups are `failed` and must not create warehouse coverage. Shopify order-level raw rows must satisfy the required schema and reconcile exactly to the six daily business/channel metrics before coverage is written. A complete all-zero source window remains `valid_zero`; in particular, zero Shopify qualified orders are valid because the complete date scaffold distinguishes zero sales from a missing fetch.
 
+GA4, GSC, and Google Ads APIs may legally omit dates whose additive metrics are all zero. Only after the API request succeeds, their source rollups must scaffold every requested date with zeros for the metrics declared in `SOURCE_METRIC_MAP`. Raw evidence remains unchanged. A failed request must never be converted into a zero scaffold.
+
 ## Clarity
 
 Each successful query stores `response.json` and `manifest.json`. A manifest includes requested dimensions, UTC snapshot bounds, HTTP status, bytes, response hash, metric row counts, maximum metric rows, schema mismatch, and truncation risk.
@@ -31,7 +33,7 @@ The snapshot anchor is a configured fixed UTC clock time. Its manifest contains 
 
 - Shopify raw order facts include `financial_status`, `test`, `cancelled_at`, and `source_name`. Convert `created_at` to `REPORT_TIMEZONE`, then strictly keep only requested local dates. Shopify daily business facts count only paid, non-test, non-cancelled orders and persist `orders`, `revenue`, `online_store_orders`, `online_store_revenue`, `offsite_orders`, and `offsite_revenue`; a successfully fetched date with zero qualified orders is a valid complete row.
 - GA4 channel facts: `date`, sessions, engaged sessions, conversions, ecommerce purchases, and GA4 revenue.
-- GA4 funnel-event raw facts: `date`, sanitized `landingPagePlusQueryString`, `eventName`, and `eventCount`, limited to `add_to_cart` and `begin_checkout`. Remove the query string before local persistence so checkout tokens and tracking parameters are not stored. Daily warehouse facts add `add_to_cart` and `begin_checkout`; channel rows remain the source of date coverage so an event-only row cannot create false GA4 completeness.
+- GA4 funnel-event raw facts: `date`, sanitized `landingPagePlusQueryString`, `eventName`, and `eventCount`, limited to `add_to_cart` and `begin_checkout`. Remove the query string before local persistence so checkout tokens and tracking parameters are not stored. Daily warehouse facts add `add_to_cart` and `begin_checkout`; the successful channel query and its requested-date scaffold establish coverage, while event rows cannot extend coverage outside that window.
 - Google Ads: clicks, spend, conversions, conversion value. Convert micros to normal currency before staging.
 - GSC: clicks and impressions; calculate CTR only after aggregation. Use an explicit `type=web`, `aggregationType=byProperty`, `date`-only Search Console query for daily report facts. High-cardinality `date × page × query × country × device` rows are diagnostic raw data and must not be treated as complete totals.
 

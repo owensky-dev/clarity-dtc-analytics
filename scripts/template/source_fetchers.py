@@ -289,7 +289,12 @@ def fetch_ga4_dataset(settings: dict[str, str], start_date: str, end_date: str) 
     return _dataset(
         "channel_and_funnel",
         raw_rows,
-        rollup_ga4_rows(channel_rows, event_rows),
+        rollup_ga4_rows(
+            channel_rows,
+            event_rows,
+            start_date=start_date,
+            end_date=end_date,
+        ),
     )
 
 
@@ -383,7 +388,9 @@ def fetch_gsc_dataset(settings: dict[str, str], start_date: str, end_date: str) 
     return _dataset(
         "search_analytics",
         raw_rows,
-        rollup_source_rows("gsc", daily_rows),
+        rollup_source_rows(
+            "gsc", daily_rows, start_date=start_date, end_date=end_date
+        ),
         {
             "search_type": "web",
             "daily_dimensions": ["date"],
@@ -446,7 +453,13 @@ def _ads_rows(settings: dict[str, str], start_date: str, end_date: str) -> list[
 
 def fetch_google_ads_dataset(settings: dict[str, str], start_date: str, end_date: str) -> Any:
     rows = _ads_rows(settings, start_date, end_date)
-    return _dataset("ad_group_performance", rows, rollup_source_rows("google_ads", rows))
+    return _dataset(
+        "ad_group_performance",
+        rows,
+        rollup_source_rows(
+            "google_ads", rows, start_date=start_date, end_date=end_date
+        ),
+    )
 
 
 def default_source_fetchers() -> dict[str, Callable[[dict[str, str], str, str], Any]]:

@@ -201,6 +201,24 @@ class SourceFetcherTests(unittest.TestCase):
         self.assertEqual(dataset.raw_rows[-1]["record_type"], "daily_total")
         self.assertEqual(dataset.manifest_metadata["daily_aggregation_type"], "byProperty")
 
+    def test_gsc_dataset_scaffolds_day_omitted_by_successful_api_response(self) -> None:
+        self.assertIsNotNone(source_fetchers)
+        with patch.object(source_fetchers, "_gsc_rows", return_value=[]), patch.object(
+            source_fetchers,
+            "_gsc_daily_rows",
+            return_value=[{"date": "2026-08-22", "clicks": 4, "impressions": 50}],
+        ):
+            dataset = source_fetchers.fetch_gsc_dataset(
+                {}, "2026-08-21", "2026-08-22"
+            )
+        self.assertEqual(
+            dataset.daily_metrics,
+            [
+                {"date": "2026-08-21", "seo_clicks": 0.0, "seo_impressions": 0.0},
+                {"date": "2026-08-22", "seo_clicks": 4.0, "seo_impressions": 50.0},
+            ],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

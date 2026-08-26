@@ -37,6 +37,7 @@ The run must:
 - Anchor each Clarity window to `CLARITY_SNAPSHOT_UTC_HOUR/MINUTE` (default `00:00`) so a rerun is idempotent; use manifest bounds as the actual evidence window.
 - Continue available source collection when another source fails, but record the failed source explicitly.
 - Treat an empty or incomplete requested-date daily rollup as a failed source snapshot. Preserve raw evidence and the failed manifest, but do not write complete warehouse coverage; a complete all-zero window remains `valid_zero`.
+- After a successful GA4, GSC, or Google Ads API response, scaffold API-omitted dates with zeros only for that source's declared additive daily metrics. Never use zero scaffolding to mask a request failure.
 - Generate the automatic weekly report only when GA4, GSC, Google Ads, and Shopify all complete in the current run; never reuse old warehouse coverage after a current fetch failure.
 
 Read [data-contract.md](references/data-contract.md) before changing schemas or query packs.

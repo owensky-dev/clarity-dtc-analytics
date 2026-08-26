@@ -11,9 +11,11 @@ TEMPLATE_SCRIPTS = Path(__file__).resolve().parents[1] / "template"
 sys.path.insert(0, str(TEMPLATE_SCRIPTS))
 
 try:
+    import source_metrics
     import source_snapshot
     import warehouse
 except ModuleNotFoundError:
+    source_metrics = None
     source_snapshot = None
     warehouse = None
 
@@ -80,12 +82,41 @@ class SourceSnapshotTests(unittest.TestCase):
                 run_id="2026-07-12T00:30:00Z",
                 dataset="search_analytics",
                 raw_rows=[],
-                daily_metrics=[{"date": "2026-07-11", "seo_clicks": 0, "seo_impressions": 0}],
-                expected_start_date="2026-07-11",
+                daily_metrics=[
+                    {"date": "2026-07-10", "seo_clicks": 0, "seo_impressions": 0},
+                    {"date": "2026-07-11", "seo_clicks": 0, "seo_impressions": 0},
+                ],
+                expected_start_date="2026-07-10",
                 expected_end_date="2026-07-11",
             )
             self.assertEqual(manifest["status"], "valid_zero")
-            self.assertEqual(store.source_complete_dates("gsc"), {"2026-07-11"})
+            self.assertEqual(store.source_complete_dates("gsc"), {"2026-07-10", "2026-07-11"})
+
+    def test_snapshot_writer_accepts_successful_gsc_rollup_with_omitted_zero_day(self) -> None:
+        self.assertIsNotNone(source_metrics)
+        self.assertIsNotNone(source_snapshot)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            store = warehouse.AnalyticsWarehouse(root)
+            daily_metrics = source_metrics.rollup_source_rows(
+                "gsc",
+                [{"date": "2026-07-11", "clicks": 1, "impressions": 10}],
+                start_date="2026-07-10",
+                end_date="2026-07-11",
+            )
+            manifest = source_snapshot.persist_source_snapshot(
+                root,
+                store,
+                source="gsc",
+                run_id="2026-07-12T00:30:00Z",
+                dataset="search_analytics",
+                raw_rows=[{"date": "2026-07-11", "clicks": 1, "impressions": 10}],
+                daily_metrics=daily_metrics,
+                expected_start_date="2026-07-10",
+                expected_end_date="2026-07-11",
+            )
+            self.assertEqual(manifest["status"], "complete")
+            self.assertEqual(store.source_complete_dates("gsc"), {"2026-07-10", "2026-07-11"})
 
     def test_snapshot_writer_fails_closed_on_incomplete_requested_date_coverage(self) -> None:
         self.assertIsNotNone(source_snapshot)
